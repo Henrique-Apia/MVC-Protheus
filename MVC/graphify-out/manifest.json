@@ -1,0 +1,282 @@
+{
+  ".claude/settings.json": {
+    "mtime": 1785279485.7005382,
+    "ast_hash": "a7c3ca7c665d9da764c1cd325d63d5b5",
+    "semantic_hash": "a7c3ca7c665d9da764c1cd325d63d5b5"
+  },
+  ".claude/settings.local.json": {
+    "mtime": 1785341888.1598487,
+    "ast_hash": "6ea86a34d1720d335d5134599334e17a",
+    "semantic_hash": "6ea86a34d1720d335d5134599334e17a"
+  },
+  ".vscode/extensions.json": {
+    "mtime": 1783963476.0,
+    "ast_hash": "d3b118b41884c371c18cbd55e392eb07",
+    "semantic_hash": "d3b118b41884c371c18cbd55e392eb07"
+  },
+  ".vscode/launch.json": {
+    "mtime": 1785341444.9715402,
+    "ast_hash": "27fcc06cbc9f00119d372087172d7363",
+    "semantic_hash": "27fcc06cbc9f00119d372087172d7363"
+  },
+  ".vscode/mcp.json": {
+    "mtime": 1783963476.0,
+    "ast_hash": "f379347bd44231ed133462aa2ae502aa",
+    "semantic_hash": "f379347bd44231ed133462aa2ae502aa"
+  },
+  ".vscode/settings.json": {
+    "mtime": 1785288979.1694305,
+    "ast_hash": "1f9147fc37df173ca109d37a916ae656",
+    "semantic_hash": "1f9147fc37df173ca109d37a916ae656"
+  },
+  ".vscode/tasks.json": {
+    "mtime": 1783963476.0,
+    "ast_hash": "903821282d5c5b46a4673a263eeb9dee",
+    "semantic_hash": "903821282d5c5b46a4673a263eeb9dee"
+  },
+  "cnsaagenda/angular.json": {
+    "mtime": 1784570804.6361804,
+    "ast_hash": "79bf625b82d9d7a250c9273b0c333e31",
+    "semantic_hash": "79bf625b82d9d7a250c9273b0c333e31"
+  },
+  "cnsaagenda/package.json": {
+    "mtime": 1783964650.0,
+    "ast_hash": "402fa5c83aeb24d214c27cdbffa04a1f",
+    "semantic_hash": "402fa5c83aeb24d214c27cdbffa04a1f"
+  },
+  "cnsaagenda/proxy.conf.json": {
+    "mtime": 1784853582.4301212,
+    "ast_hash": "37aea4b041b3b2d93a2d4c55ec76a309",
+    "semantic_hash": "37aea4b041b3b2d93a2d4c55ec76a309"
+  },
+  "cnsaagenda/public/assets/data/appconfig.json": {
+    "mtime": 1784748430.1837666,
+    "ast_hash": "8b213e3e3c520255b0fce6c299e677ba",
+    "semantic_hash": "8b213e3e3c520255b0fce6c299e677ba"
+  },
+  "cnsaagenda/src/app/app.config.ts": {
+    "mtime": 1784837133.5917344,
+    "ast_hash": "d688dfbe004022721841b665b480b3d2",
+    "semantic_hash": "d688dfbe004022721841b665b480b3d2"
+  },
+  "cnsaagenda/src/app/app.routes.ts": {
+    "mtime": 1784230942.3815866,
+    "ast_hash": "d86f9fce4f72cc4ea8ce9242742a1b22",
+    "semantic_hash": "d86f9fce4f72cc4ea8ce9242742a1b22"
+  },
+  "cnsaagenda/src/app/app.spec.ts": {
+    "mtime": 1783963476.0,
+    "ast_hash": "32f45fd5ce8e70deeff7b8c8f9638e68",
+    "semantic_hash": "32f45fd5ce8e70deeff7b8c8f9638e68"
+  },
+  "cnsaagenda/src/app/app.ts": {
+    "mtime": 1783963476.0,
+    "ast_hash": "f896d9de97cd3eecc44c63640e4c9642",
+    "semantic_hash": "f896d9de97cd3eecc44c63640e4c9642"
+  },
+  "cnsaagenda/src/app/core/models/agendamento.model.ts": {
+    "mtime": 1784894903.6537845,
+    "ast_hash": "482e81055bdba99f1a0ad69c040e2978",
+    "semantic_hash": "482e81055bdba99f1a0ad69c040e2978"
+  },
+  "cnsaagenda/src/app/core/services/agendamento.service.ts": {
+    "mtime": 1784897108.8018267,
+    "ast_hash": "9e8eac0239479b0afc36ba28a40d7a83",
+    "semantic_hash": "9e8eac0239479b0afc36ba28a40d7a83"
+  },
+  "cnsaagenda/src/app/features/agenda-detalhe-modal/agenda-detalhe-modal.ts": {
+    "mtime": 1784135316.0,
+    "ast_hash": "b5bee495658f17929f4e30ab639ab6f0",
+    "semantic_hash": "b5bee495658f17929f4e30ab639ab6f0"
+  },
+  "cnsaagenda/src/app/features/agenda-lista/agenda-lista.ts": {
+    "mtime": 1784897115.651142,
+    "ast_hash": "67bc82a71ebf9b3252ec2a0ba101e090",
+    "semantic_hash": "67bc82a71ebf9b3252ec2a0ba101e090"
+  },
+  "cnsaagenda/src/main.ts": {
+    "mtime": 1783963476.0,
+    "ast_hash": "cba405370fbad3ca1cc051b897fdc739",
+    "semantic_hash": "cba405370fbad3ca1cc051b897fdc739"
+  },
+  "cnsaagenda/tsconfig.app.json": {
+    "mtime": 1783963476.0,
+    "ast_hash": "ab7f8786b3ff7226a84b0121b9dc5e22",
+    "semantic_hash": "ab7f8786b3ff7226a84b0121b9dc5e22"
+  },
+  "cnsaagenda/tsconfig.json": {
+    "mtime": 1783963476.0,
+    "ast_hash": "d4886a8a9be1c35a2d17ab5e0f4439c2",
+    "semantic_hash": "d4886a8a9be1c35a2d17ab5e0f4439c2"
+  },
+  "cnsaagenda/tsconfig.spec.json": {
+    "mtime": 1785282451.1882389,
+    "ast_hash": "91ec09aaf52e99fd9a72eacc248f5b8e",
+    "semantic_hash": "91ec09aaf52e99fd9a72eacc248f5b8e"
+  },
+  "pouichamados/.vscode/extensions.json": {
+    "mtime": 1784909312.0,
+    "ast_hash": "66fd9e60d4633b6099fe02e06a7075ea",
+    "semantic_hash": "66fd9e60d4633b6099fe02e06a7075ea"
+  },
+  "pouichamados/.vscode/launch.json": {
+    "mtime": 1784909312.0,
+    "ast_hash": "430386a2f03e9d559664c196344c121b",
+    "semantic_hash": "430386a2f03e9d559664c196344c121b"
+  },
+  "pouichamados/.vscode/tasks.json": {
+    "mtime": 1784909312.0,
+    "ast_hash": "cb7ed9a56930402d9059ea5a9773d60e",
+    "semantic_hash": "cb7ed9a56930402d9059ea5a9773d60e"
+  },
+  "pouichamados/angular.json": {
+    "mtime": 1785177028.9533389,
+    "ast_hash": "c9351d681e4b9bb7f953a99a95bad72d",
+    "semantic_hash": "c9351d681e4b9bb7f953a99a95bad72d"
+  },
+  "pouichamados/package.json": {
+    "mtime": 1785206025.0855107,
+    "ast_hash": "31b2a9b6d8e07f38b0df0f309cdf3143",
+    "semantic_hash": "31b2a9b6d8e07f38b0df0f309cdf3143"
+  },
+  "pouichamados/proxy.conf.json": {
+    "mtime": 1785281280.2907348,
+    "ast_hash": "1af448fbe46b75763a186c0b3f83c23d",
+    "semantic_hash": "1af448fbe46b75763a186c0b3f83c23d"
+  },
+  "pouichamados/public/assets/data/appConfig.json": {
+    "mtime": 1785209186.3436272,
+    "ast_hash": "5a76901a406ee3c9b77792ea527e12a3",
+    "semantic_hash": "5a76901a406ee3c9b77792ea527e12a3"
+  },
+  "pouichamados/public/assets/preload/advpltojs.js": {
+    "mtime": 1785277927.8533254,
+    "ast_hash": "2d32ecdbb4a066d13e05277885e2903b",
+    "semantic_hash": "2d32ecdbb4a066d13e05277885e2903b"
+  },
+  "pouichamados/src/app/app.config.ts": {
+    "mtime": 1785216328.0,
+    "ast_hash": "732243786530a57c3c441e739d031c19",
+    "semantic_hash": "732243786530a57c3c441e739d031c19"
+  },
+  "pouichamados/src/app/app.routes.ts": {
+    "mtime": 1785191482.0,
+    "ast_hash": "050944af44ac89a44eae1058634659e7",
+    "semantic_hash": "050944af44ac89a44eae1058634659e7"
+  },
+  "pouichamados/src/app/app.spec.ts": {
+    "mtime": 1785191482.0,
+    "ast_hash": "d5b9b2200967c4fc9d6264334b82af19",
+    "semantic_hash": "d5b9b2200967c4fc9d6264334b82af19"
+  },
+  "pouichamados/src/app/app.ts": {
+    "mtime": 1785282229.1315446,
+    "ast_hash": "6ebb070ad44f5d0915888aa4742bc12b",
+    "semantic_hash": "6ebb070ad44f5d0915888aa4742bc12b"
+  },
+  "pouichamados/src/app/core/interceptors/chamados-rest-adapter.interceptor.ts": {
+    "mtime": 1785350749.2496998,
+    "ast_hash": "aa1aaaf197759838263ce9204ac0fb49",
+    "semantic_hash": "aa1aaaf197759838263ce9204ac0fb49"
+  },
+  "pouichamados/src/app/core/models/chamado.model.ts": {
+    "mtime": 1785274467.6313088,
+    "ast_hash": "965656e7c23f19391036a8349a1c1dd0",
+    "semantic_hash": "965656e7c23f19391036a8349a1c1dd0"
+  },
+  "pouichamados/src/app/core/models/componente.model.ts": {
+    "mtime": 1785274468.1263397,
+    "ast_hash": "45420a070f9072bb8119873dec64c6ad",
+    "semantic_hash": "45420a070f9072bb8119873dec64c6ad"
+  },
+  "pouichamados/src/app/core/services/chamado.service.ts": {
+    "mtime": 1785274468.598248,
+    "ast_hash": "65c56c011fde6d73fd4cf5f8b591d830",
+    "semantic_hash": "65c56c011fde6d73fd4cf5f8b591d830"
+  },
+  "pouichamados/src/app/core/services/componente.service.ts": {
+    "mtime": 1785351760.383497,
+    "ast_hash": "63fd3b8f2db7109128f1603497f039fa",
+    "semantic_hash": "63fd3b8f2db7109128f1603497f039fa"
+  },
+  "pouichamados/src/app/features/chamados-lista/chamados-lista.ts": {
+    "mtime": 1785351803.2357469,
+    "ast_hash": "757aa1718997811d4cd2fa2dc4ad4bd1",
+    "semantic_hash": "757aa1718997811d4cd2fa2dc4ad4bd1"
+  },
+  "pouichamados/src/app/shared/anotacao-editor.ts": {
+    "mtime": 1785348400.6733308,
+    "ast_hash": "3a4ec88666c724be623d30e264f1222f",
+    "semantic_hash": "3a4ec88666c724be623d30e264f1222f"
+  },
+  "pouichamados/src/app/shared/lupa-modal.ts": {
+    "mtime": 1785351775.3181262,
+    "ast_hash": "d6e285d7163ad9c77498b90d0552038f",
+    "semantic_hash": "d6e285d7163ad9c77498b90d0552038f"
+  },
+  "pouichamados/src/main.ts": {
+    "mtime": 1785191482.0,
+    "ast_hash": "1289536d6d8f94242a4ffc598d094633",
+    "semantic_hash": "1289536d6d8f94242a4ffc598d094633"
+  },
+  "pouichamados/tsconfig.app.json": {
+    "mtime": 1783974276.0,
+    "ast_hash": "ab7f8786b3ff7226a84b0121b9dc5e22",
+    "semantic_hash": "ab7f8786b3ff7226a84b0121b9dc5e22"
+  },
+  "pouichamados/tsconfig.json": {
+    "mtime": 1783974276.0,
+    "ast_hash": "d4886a8a9be1c35a2d17ab5e0f4439c2",
+    "semantic_hash": "d4886a8a9be1c35a2d17ab5e0f4439c2"
+  },
+  "pouichamados/tsconfig.spec.json": {
+    "mtime": 1785177658.4669774,
+    "ast_hash": "9261a8f9db3b2c991df0e6f9d51828b1",
+    "semantic_hash": "9261a8f9db3b2c991df0e6f9d51828b1"
+  },
+  "cnsaagenda/src/app/app.html": {
+    "mtime": 1783963476.0,
+    "ast_hash": "92b5943b800a66a310a32614ee6e4e97",
+    "semantic_hash": "92b5943b800a66a310a32614ee6e4e97"
+  },
+  "cnsaagenda/src/app/features/agenda-detalhe-modal/agenda-detalhe-modal.html": {
+    "mtime": 1784821820.5701485,
+    "ast_hash": "4df37c7db009b3d4031dcf627d7db8e2",
+    "semantic_hash": "4df37c7db009b3d4031dcf627d7db8e2"
+  },
+  "cnsaagenda/src/app/features/agenda-lista/agenda-lista.html": {
+    "mtime": 1784897109.490156,
+    "ast_hash": "4760e3befe11cd79e7a3eef3aceb3092",
+    "semantic_hash": "4760e3befe11cd79e7a3eef3aceb3092"
+  },
+  "cnsaagenda/src/index.html": {
+    "mtime": 1783963476.0,
+    "ast_hash": "1891d50e94d3d459fee35df2018afad5",
+    "semantic_hash": "1891d50e94d3d459fee35df2018afad5"
+  },
+  "pouichamados/src/app/app.html": {
+    "mtime": 1785206937.0921068,
+    "ast_hash": "aa65f479441e787e6818e36c1650089c",
+    "semantic_hash": "aa65f479441e787e6818e36c1650089c"
+  },
+  "pouichamados/src/app/features/chamados-lista/chamados-lista.html": {
+    "mtime": 1785351816.4460263,
+    "ast_hash": "6094c7d98443695a46059c10880cd2b9",
+    "semantic_hash": "6094c7d98443695a46059c10880cd2b9"
+  },
+  "pouichamados/src/app/shared/anotacao-editor.html": {
+    "mtime": 1785348411.10528,
+    "ast_hash": "8f53c9a2fa1848379288b1367c876809",
+    "semantic_hash": "8f53c9a2fa1848379288b1367c876809"
+  },
+  "pouichamados/src/app/shared/lupa-modal.html": {
+    "mtime": 1785274841.487434,
+    "ast_hash": "c5647e109c89a2f79b2ad70203263ea9",
+    "semantic_hash": "c5647e109c89a2f79b2ad70203263ea9"
+  },
+  "pouichamados/src/index.html": {
+    "mtime": 1785191482.0,
+    "ast_hash": "8d89b6c4f5de71881479d6cacec56b68",
+    "semantic_hash": "8d89b6c4f5de71881479d6cacec56b68"
+  }
+}

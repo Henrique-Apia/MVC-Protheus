@@ -1,0 +1,10 @@
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\cnsaagenda\src\app\app.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\cnsaagenda\src\app\features\agenda-detalhe-modal\agenda-detalhe-modal.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\cnsaagenda\src\app\features\agenda-lista\agenda-lista.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\cnsaagenda\src\index.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\docs\superpowers\specs\2026-07-30-agendamento-sequence-race-fix-design.md
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\pouichamados\src\app\app.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\pouichamados\src\app\features\chamados-lista\chamados-lista.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\pouichamados\src\app\shared\anotacao-editor.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\pouichamados\src\app\shared\lupa-modal.html
+C:\Users\henrique\OneDrive - Ápia Consultoria e Sistemas\Documentos\henrique\ÁPIA\Prot Advpl\MVC\pouichamados\src\index.html

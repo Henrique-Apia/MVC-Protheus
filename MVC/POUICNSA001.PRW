@@ -1,0 +1,2400 @@
+#include "RESTFUL.CH"
+#include "PROTHEUS.CH"
+#include "RWMAKE.CH"
+#include "TOPCONN.CH"
+#include "TOTVS.CH"
+#include "FWMVCDEF.CH"
+
+////////////////////////////////////////////////////////////////////////////////
+// POUICNSA001.prw
+// API REST do portal PO-UI do CNSA001.
+// CNSACHAMADOS (GET) e CNSACHAMADOSASSUMIR (POST) sao dois WSRESTFUL
+// separados, cada um com seu unico WSMETHOD - mas no MESMO arquivo.
+////////////////////////////////////////////////////////////////////////////////
+
+PUBLISH MODEL REST NAME chamados
+
+#define CNSA_FWMODEL_HOST     "http://10.0.0.3:3624"
+#define CNSA_FWMODEL_ZA1_PATH "/rest/FwModel/chamados/"
+#define CNSA_FWMODEL_ZA1_ID   "ModelZA1_Main"
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function ModelDef()
+    Local oModel
+    Local oStruZA1
+
+    oStruZA1 := FWFormStruc(1, 'ZA1')
+    oModel   := MPFormModel():New('ModelZA1')
+    oModel:AddFields('ModelZA1_Main', , oStruZA1)
+    oModel:SetPrimaryKey({'ZA1_FILIAL', 'ZA1_IDCH'})
+    oModel:SetDescription('Model Chamados')
+    oModel:GetModel('ModelZA1_Main'):SetDescription('Model Chamados Main')
+
+Return oModel
+
+
+////////////////////////////////////////////////////////////////////////////////
+// LISTAGEM / VISUALIZAR / PESQUISAR
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOS DESCRIPTION "Listagem de chamados (ZA1) para o portal PO-UI" FORMAT APPLICATION_JSON
+
+    WSDATA pagina         AS INTEGER   OPTIONAL
+    WSDATA tamanho        AS INTEGER   OPTIONAL
+    WSDATA meus           AS INTEGER   OPTIONAL
+    WSDATA semResponsavel AS INTEGER   OPTIONAL
+    WSDATA status         AS CHARACTER OPTIONAL
+    WSDATA idCh           AS CHARACTER OPTIONAL
+    WSDATA texto          AS CHARACTER OPTIONAL
+
+    WSMETHOD GET DESCRIPTION "Lista chamados - filtros, visualizar por Id, ou pesquisa livre por texto no assunto"
+
+END WSRESTFUL
+
+WSMETHOD GET WSRECEIVE pagina, tamanho, meus, semResponsavel, status, idCh, texto WSSERVICE CNSACHAMADOS
+    Local oJson            := JsonObject():New()
+    Local oFwResp          := JsonObject():New()
+    Local aRetorno         := {}
+    Local aResources       := {}
+    Local oResource        := Nil
+    Local oLinha           := Nil
+    Local oRest            := Nil
+    Local aHead            := {}
+    Local nPagina          := 1
+    Local nTamanho         := 10
+    Local nStartIdx        := 1
+    Local nTotal           := 0
+    Local nI               := 0
+    Local nJ               := 0
+    Local nMeuParam        := 0
+    Local nSemRespParam    := 0
+    Local cStatusParam     := ""
+    Local cIdChParam       := ""
+    Local cTextoParam      := ""
+    Local cTextoEsc        := ""
+    Local cConsultorSessao := ""
+    Local cFiltro          := ""
+    Local cGetParam        := ""
+    Local cResp            := ""
+    Local cJsonErr         := ""
+    Local cAuthValue       := ""
+    Local aCacheTec        := {}
+    Local aCacheCli        := {}
+    Local nPosCache        := 0
+    Local cCodConsul       := ""
+    Local cCodCli          := ""
+    Local cLoja            := ""
+    Local cNomeTec         := ""
+    Local cNomeCli         := ""
+    // FIX (Projeto/Tarefa "sumindo" toda vez que abre Editar): a listagem so
+    // devolvia idCh/assunto/status/tecnico/cliente/data - nunca os codigos de
+    // tipo/projeto/tarefa/email/cliente. O front (abrirEditar) sempre abria
+    // esses campos em branco, e como Tarefa exige Projeto selecionado e
+    // Projeto exige Cliente selecionado (cascata da lupa), o usuario era
+    // obrigado a reselecionar Cliente -> Projeto -> Tarefa do zero em TODA
+    // edicao, mesmo pra corrigir so o assunto. Mesma familia do bug ja
+    // corrigido pra codConsultor - agora fechando os campos que faltavam.
+    Local cTipo            := ""
+    Local cProjeto         := ""
+    Local cTarefa          := ""
+    Local cEmailCli        := ""
+    Local cNomeProj        := ""
+    Local cNomeTaf         := ""
+    Local aCacheProj       := {}
+    Local aCacheTaf        := {}
+    Local oErro            := Nil
+    Local aCondicoes       := {}
+    Local aStatusLista     := {}
+    Local aStatusCond      := {}
+    Local cCondStatus      := ""
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+
+    Begin Sequence
+
+        Default ::pagina         := 1
+        Default ::tamanho        := 10
+        Default ::meus           := 0
+        Default ::semResponsavel := 0
+        Default ::status         := ""
+        Default ::idCh           := ""
+        Default ::texto          := ""
+
+        nPagina       := If(::pagina  < 1, 1, ::pagina)
+        nTamanho      := If(::tamanho < 1 .Or. ::tamanho > 100, 10, ::tamanho)
+        nStartIdx     := (nPagina - 1) * nTamanho + 1
+        nMeuParam     := ::meus
+        nSemRespParam := ::semResponsavel
+        cStatusParam  := AllTrim(::status)
+        cIdChParam    := AllTrim(::idCh)
+        // FIX (busca por assunto acentuado nao batia): DecodeUTF8 no texto
+        // da pesquisa livre antes de montar o LIKE.
+        cTextoParam   := DecodeUTF8(AllTrim(::texto))
+
+        If nMeuParam == 1
+            cConsultorSessao := Posicione("AA1", 4, xFilial("AA1") + __cUserId, "AA1_CODTEC")
+        EndIf
+
+        If !Empty(cIdChParam)
+            cFiltro := "ZA1_IDCH = '" + cIdChParam + "'"
+
+        ElseIf !Empty(cTextoParam)
+            cTextoEsc := StrTran(cTextoParam, "'", "''")
+            cFiltro := "ZA1_ASSUNT LIKE '%" + cTextoEsc + "%'"
+
+        Else
+            // FIX: cada categoria de filtro (meus / semResponsavel / status) entra
+            // como uma condicao PROPRIA em aCondicoes, e essas condicoes sao unidas
+            // por AND. O OR so acontece DENTRO da lista de status (ex: "2,3").
+            // Antes, tudo (incluindo as categorias entre si) era unido por OR, o que
+            // fazia "meus=1&status=2" devolver TODOS os chamados com status 2 de
+            // QUALQUER tecnico, em vez de somente os do tecnico logado.
+            If nMeuParam == 1 .And. !Empty(cConsultorSessao)
+                AAdd(aCondicoes, "ZA1_CONSUL = '" + cConsultorSessao + "'")
+            EndIf
+
+            If nSemRespParam == 1
+                AAdd(aCondicoes, "ZA1_CONSUL = ' '")
+            EndIf
+
+            If !Empty(cStatusParam)
+                aStatusLista := StrTokArr(cStatusParam, ",")
+                aStatusCond  := {}
+                For nJ := 1 To Len(aStatusLista)
+                    AAdd(aStatusCond, "ZA1_STATUS = '" + AllTrim(aStatusLista[nJ]) + "'")
+                Next nJ
+
+                cCondStatus := ""
+                For nJ := 1 To Len(aStatusCond)
+                    cCondStatus += If(nJ > 1, " OR ", "") + aStatusCond[nJ]
+                Next nJ
+
+                If Len(aStatusCond) > 1
+                    AAdd(aCondicoes, "(" + cCondStatus + ")")
+                Else
+                    AAdd(aCondicoes, cCondStatus)
+                EndIf
+            EndIf
+
+            cFiltro := ""
+            For nI := 1 To Len(aCondicoes)
+                cFiltro += If(nI > 1, " AND ", "") + aCondicoes[nI]
+            Next nI
+        EndIf
+
+        cAuthValue := GETMV("MV_CNSAAUT")
+
+        AAdd(aHead, "tenantid: " + cEmpAnt + "," + cFilAnt)
+        AAdd(aHead, "Authorization: Basic " + cAuthValue)
+
+        cGetParam := "startindex=" + AllTrim(Str(nStartIdx)) + "&count=" + AllTrim(Str(nTamanho))
+        If !Empty(cFiltro)
+            cGetParam += "&filter=" + CNSA_URLENC(cFiltro)
+        EndIf
+
+        oRest := FWRest():New(CNSA_FWMODEL_HOST)
+        oRest:SetPath(CNSA_FWMODEL_ZA1_PATH)
+
+        If !oRest:Get(aHead, cGetParam)
+            ::SetStatus(502)
+            ::SetResponse('{"erro":"' + CNSA_JSONESC(oRest:GetLastError()) + '"}')
+            FreeObj(oRest)
+            Break
+        EndIf
+
+        cResp := oRest:GetResult()
+        FreeObj(oRest)
+
+        cJsonErr := oFwResp:FromJson(cResp)
+        If ValType(cJsonErr) == "C" .And. !Empty(cJsonErr)
+            ::SetStatus(500)
+            ::SetResponse('{"erro":"Falha no parse do retorno: ' + CNSA_JSONESC(cJsonErr) + '"}')
+            Break
+        EndIf
+
+        nTotal     := If(ValType(oFwResp['total'])     == 'N', oFwResp['total'],     0)
+        aResources := If(ValType(oFwResp['resources']) == 'A', oFwResp['resources'], {})
+
+        For nI := 1 To Len(aResources)
+            oResource := aResources[nI]
+            cCodConsul := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_CONSUL"))
+            cCodCli    := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_CLIENT"))
+            cLoja      := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_LOJA"))
+
+            nPosCache := AScan(aCacheTec, {|x| x[1] == cCodConsul})
+            If nPosCache > 0
+                cNomeTec := aCacheTec[nPosCache][2]
+            ElseIf Empty(cCodConsul)
+                cNomeTec := ""
+            Else
+                cNomeTec := AllTrim(Posicione("AA1", 1, xFilial("AA1") + cCodConsul, "AA1_NOMTEC"))
+                AAdd(aCacheTec, {cCodConsul, cNomeTec})
+            EndIf
+
+            nPosCache := AScan(aCacheCli, {|x| x[1] == cCodCli + cLoja})
+            If nPosCache > 0
+                cNomeCli := aCacheCli[nPosCache][2]
+            ElseIf Empty(cCodCli)
+                cNomeCli := ""
+            Else
+                cNomeCli := AllTrim(Posicione("SA1", 1, xFilial("SA1") + cCodCli + cLoja, "A1_NOME"))
+                AAdd(aCacheCli, {cCodCli + cLoja, cNomeCli})
+            EndIf
+
+            cTipo     := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_TIPO"))
+            cProjeto  := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_PROJ"))
+            cTarefa   := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_TAREFA"))
+            cEmailCli := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_EMAIL"))
+
+            // ASSUNCAO A VALIDAR (Henrique, confere isso): estou usando
+            // Posicione("AF8", 1, ...) e Posicione("AF9", 1, ...) assumindo
+            // que a Ordem 1 dessas tabelas comeca por FILIAL+PROJETO (AF8) e
+            // FILIAL+PROJETO+TAREFA (AF9), igual ja usado em CNSA_ASSUMIR
+            // (AF8_FASE via Posicione AF8) e no CNSA_TARLUPA (ComponentesRest.prw,
+            // filtra AF9 por AF9_PROJET). Se a ordem for outra, o Posicione so
+            // devolve vazio (nao quebra) - nome do projeto/tarefa fica em
+            // branco, mas o CODIGO (o que realmente importa pra nao perder
+            // o vinculo) continua correto.
+            nPosCache := AScan(aCacheProj, {|x| x[1] == cProjeto})
+            If nPosCache > 0
+                cNomeProj := aCacheProj[nPosCache][2]
+            ElseIf Empty(cProjeto)
+                cNomeProj := ""
+            Else
+                cNomeProj := AllTrim(Posicione("AF8", 1, xFilial("AF8") + cProjeto, "AF8_DESCRI"))
+                AAdd(aCacheProj, {cProjeto, cNomeProj})
+            EndIf
+
+            nPosCache := AScan(aCacheTaf, {|x| x[1] == cProjeto + cTarefa})
+            If nPosCache > 0
+                cNomeTaf := aCacheTaf[nPosCache][2]
+            ElseIf Empty(cTarefa)
+                cNomeTaf := ""
+            Else
+                cNomeTaf := AllTrim(Posicione("AF9", 1, xFilial("AF9") + cProjeto + cTarefa, "AF9_DESCRI"))
+                AAdd(aCacheTaf, {cProjeto + cTarefa, cNomeTaf})
+            EndIf
+
+            // FIX (acentos virando caractere de substituicao no front):
+            // EncodeUtf8 em todo texto livre/nome antes do JSON - o WSRESTFUL
+            // classico nao converte ANSI/CP1252 pra UTF-8 sozinho. Codigos
+            // puros (idCh, status, codConsultor, codCliente, lojaCliente,
+            // tipo, projeto, tarefa, emailCliente, data) nao precisam.
+            oLinha := JsonObject():New()
+            oLinha['idCh']         := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_IDCH"))
+            oLinha['assunto']      := EncodeUtf8(AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_ASSUNT")))
+            oLinha['status']       := AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_STATUS"))
+            oLinha['tecnico']      := EncodeUtf8(cNomeTec)
+            oLinha['codConsultor'] := cCodConsul
+            oLinha['cliente']      := EncodeUtf8(cNomeCli)
+            oLinha['codCliente']   := cCodCli
+            oLinha['lojaCliente']  := cLoja
+            oLinha['tipo']         := cTipo
+            oLinha['projeto']      := cProjeto
+            oLinha['nomeProjeto']  := EncodeUtf8(cNomeProj)
+            oLinha['tarefa']       := cTarefa
+            oLinha['nomeTarefa']   := EncodeUtf8(cNomeTaf)
+            oLinha['emailCliente'] := cEmailCli
+            oLinha['data']         := CNSA_DATA_ISO_ZA1(AllTrim(CNSA_CAMPO_ZA1(oResource, "ZA1_DATA")))
+            AAdd(aRetorno, oLinha)
+        Next nI
+
+        oJson['total']        := nTotal
+        oJson['totalPaginas'] := If(nTotal == 0, 0, Ceiling(nTotal / nTamanho))
+        oJson['pagina']       := nPagina
+        oJson['tamanho']      := nTamanho
+        oJson['items']        := aRetorno
+
+        ::SetResponse(oJson:ToJson())
+
+    Recover Using oErro
+        If oErro != Nil
+            ::SetStatus(500)
+            ::SetResponse('{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}')
+        EndIf
+    End Sequence
+
+Return .T.
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ASSUMIR - WSRESTFUL proprio (CNSACHAMADOSASSUMIR), mesmo arquivo.
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSASSUMIR DESCRIPTION "Assume um chamado (ZA1) para o tecnico da sessao logada" FORMAT APPLICATION_JSON
+
+    WSDATA idCh AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Assume um chamado (idCh) para o tecnico da sessao logada"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE idCh WSSERVICE CNSACHAMADOSASSUMIR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    aResultado := CNSA_ASSUMIR(AllTrim(::idCh))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_CAMPO_ZA1(oResource, cNome)
+    Local aModels := Nil
+    Local aFields := Nil
+    Local oModel  := Nil
+    Local oField  := Nil
+    Local nM      := 0
+    Local nF      := 0
+
+    If ValType(oResource) != 'J'
+        Return ''
+    EndIf
+
+    aModels := oResource['models']
+    If ValType(aModels) != 'A'
+        Return ''
+    EndIf
+
+    For nM := 1 To Len(aModels)
+        oModel := aModels[nM]
+        If ValType(oModel) == 'J' .And. AllTrim(oModel['id']) == CNSA_FWMODEL_ZA1_ID
+            aFields := oModel['fields']
+            If ValType(aFields) == 'A'
+                For nF := 1 To Len(aFields)
+                    oField := aFields[nF]
+                    If ValType(oField) == 'J' .And. AllTrim(oField['id']) == cNome
+                        Do Case
+                            Case ValType(oField['value']) == 'C'
+                                Return oField['value']
+                            Case ValType(oField['value']) == 'N'
+                                Return cValToChar(oField['value'])
+                            Case ValType(oField['value']) == 'D'
+                                Return DToS(oField['value'])         
+                            OtherWise
+                                Return ''
+                        EndCase
+                    EndIf
+                Next nF
+            EndIf
+        EndIf
+    Next nM
+Return ''
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_DATA_ISO_ZA1(cData)
+    Local cAno := ""
+    Local cMes := ""
+    Local cDia := ""
+
+    cData := AllTrim(cData)
+
+    If Len(cData) == 8
+        cAno := SubStr(cData, 1, 4)
+        cMes := SubStr(cData, 5, 2)
+        cDia := SubStr(cData, 7, 2)
+
+        If Val(cMes) >= 1 .And. Val(cMes) <= 12 .And. Val(cDia) >= 1 .And. Val(cDia) <= 31
+            Return cAno + "-" + cMes + "-" + cDia
+        EndIf
+    EndIf
+
+Return ""
+
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_URLENC(cTexto)
+    Local cRet := ""
+    Local nI   := 0
+    Local cCh  := ""
+
+    For nI := 1 To Len(cTexto)
+        cCh := SubStr(cTexto, nI, 1)
+        If (cCh >= "A" .And. cCh <= "Z") .Or. ;
+           (cCh >= "a" .And. cCh <= "z") .Or. ;
+           (cCh >= "0" .And. cCh <= "9") .Or. ;
+           (cCh $ "-_.~")
+            cRet += cCh
+        Else
+            cRet += "%" + CNSA_HEX2(Asc(cCh))
+        EndIf
+    Next nI
+Return cRet
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_HEX2(nVal)
+    Local cHex := "0123456789ABCDEF"
+Return SubStr(cHex, Int(nVal/16)+1, 1) + SubStr(cHex, (nVal % 16)+1, 1)
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_JSONESC(cTexto)
+    Local cRet := cTexto
+    cRet := StrTran(cRet, '\',  '\\')
+    cRet := StrTran(cRet, '"',  '\"')
+    cRet := StrTran(cRet, Chr(13)+Chr(10), '\n')
+    cRet := StrTran(cRet, Chr(10), '\n')
+    cRet := StrTran(cRet, Chr(13), '\n')
+    cRet := StrTran(cRet, Chr(9),  '\t')
+Return cRet
+
+////////////////////////////////////////////////////////////////////////////////
+// EXCLUIR - WSRESTFUL proprio (CNSACHAMADOSEXCLUIR), mesmo arquivo, mesmo
+// padrao ja validado no Assumir (WSMETHOD sem DESCRIPTION extra na implementacao).
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSEXCLUIR DESCRIPTION "Exclui um chamado (ZA1), removendo agenda vinculada e avisando por e-mail" FORMAT APPLICATION_JSON
+
+    WSDATA idCh   AS CHARACTER OPTIONAL
+    WSDATA motivo AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Exclui um chamado (idCh), com motivo obrigatorio se houver tecnico designado"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE idCh, motivo WSSERVICE CNSACHAMADOSEXCLUIR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    // FIX (motivo com acento - ia corromper o e-mail de cancelamento, ver
+    // CNSA_ENVIAEMAIL que faz EncodeUtf8 no corpo inteiro depois): DecodeUTF8
+    // aqui deixa o motivo em ANSI igual ao resto do texto antes de montar
+    // o corpo do e-mail em CNSA_CANCEL_FRONT.
+    aResultado := CNSA_EXCLUIR(AllTrim(::idCh), DecodeUTF8(AllTrim(::motivo)))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Logica real do Excluir - fora do WSMETHOD, devolve {nStatusHttp, cCorpoJson}.
+//
+// Cascata: 1) captura dados antes de apagar, 2) apaga o chamado, 3) remove
+// TODOS os agendamentos vinculados na SZ6 (sem confirmacao individual - unica
+// diferenca real do CNSA001 original, que perguntava um a um via MsgYesNo;
+// numa chamada REST nao ha como perguntar no meio do caminho), 4) se tinha
+// tecnico designado, envia e-mail de cancelamento pra ele.
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_EXCLUIR(cIdCh, cMotivo)
+    Local cConsulAnterior  := ""
+    Local cClienteAnterior := ""
+    Local cLojaAnterior    := ""
+    Local cNomeCli         := ""
+    Local cNomeTec         := ""
+    Local cEmailTec        := ""
+    Local cExclPor         := ""
+    Local cDataAge         := DToC(Date())
+    Local cHmini           := "00:00"
+    Local cHmfim           := "00:00"
+    Local cCorpo           := ""
+    Local cAlias           := ""
+    Local nCham            := 0
+    Local oJson            := JsonObject():New()
+    Local oErro            := Nil
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        cConsulAnterior  := AllTrim(ZA1->ZA1_CONSUL)
+        cClienteAnterior := AllTrim(ZA1->ZA1_CLIENT)
+        cLojaAnterior    := AllTrim(ZA1->ZA1_LOJA)
+
+        // Motivo so e obrigatorio se tiver tecnico designado (precisa dele
+        // pro corpo do e-mail) - sem tecnico, ninguem sera notificado.
+        If !Empty(cConsulAnterior) .And. Empty(cMotivo)
+            Return {400, '{"erro":"Informe o motivo do cancelamento - obrigatorio quando o chamado tem tecnico designado."}'}
+        EndIf
+
+        cExclPor := AllTrim(Posicione("AA1", 4, xFilial("AA1") + __cUserId, "AA1_NOMTEC"))
+        cNomeCli := AllTrim(Posicione("SA1", 1, xFilial("SA1") + cClienteAnterior + cLojaAnterior, "A1_NOME"))
+
+        // Busca data/horario do agendamento mais recente, so pra contexto do e-mail
+        nCham  := Val(cIdCh)
+        cAlias := GetNextAlias()
+        BeginSql Alias cAlias
+            SELECT Z6_DTAGE, Z6_HMINI, Z6_HMFIM
+            FROM %Table:SZ6% SZ6
+            WHERE Z6_FILIAL  = %xFilial:SZ6%
+              AND Z6_CHAMADO = %Exp:nCham%
+              AND %NotDel%
+        EndSql
+        If !(cAlias)->(Eof())
+            If ValType((cAlias)->Z6_DTAGE) == "D"
+                cDataAge := DToC((cAlias)->Z6_DTAGE)
+            Else
+                cDataAge := AllTrim((cAlias)->Z6_DTAGE)
+                If Len(cDataAge) == 8
+                    cDataAge := SubStr(cDataAge,7,2) + "/" + SubStr(cDataAge,5,2) + "/" + SubStr(cDataAge,1,4)
+                EndIf
+            EndIf
+            cHmini := AllTrim((cAlias)->Z6_HMINI)
+            cHmfim := AllTrim((cAlias)->Z6_HMFIM)
+        EndIf
+        (cAlias)->(DbCloseArea())
+
+        If Empty(cHmini) ; cHmini := "00:00" ; EndIf
+        If Empty(cHmfim) ; cHmfim := "00:00" ; EndIf
+
+        // Apaga o chamado
+        RecLock("ZA1", .F.)
+            ZA1->(DbDelete())
+        ZA1->(MsUnlock())
+
+        // Remove TODOS os agendamentos vinculados (SZ6) - sem confirmacao
+        // individual (adaptacao explicada acima)
+        cAlias := GetNextAlias()
+        BeginSql Alias cAlias
+            SELECT SZ6.R_E_C_N_O_ RECNO
+            FROM %Table:SZ6% SZ6
+            WHERE SZ6.Z6_FILIAL  = %xFilial:SZ6%
+              AND SZ6.Z6_CHAMADO = %Exp:nCham%
+              AND %NotDel%
+        EndSql
+        dbSelectArea("SZ6")
+        While !(cAlias)->(Eof())
+            SZ6->(DbGoto((cAlias)->RECNO))
+            If !SZ6->(Eof())
+                RecLock("SZ6", .F.)
+                    SZ6->(DbDelete())
+                SZ6->(MsUnlock())
+            EndIf
+            (cAlias)->(DbSkip())
+        EndDo
+        (cAlias)->(DbCloseArea())
+
+        // Envia e-mail de cancelamento, so se tinha tecnico designado
+        If !Empty(cConsulAnterior)
+            cNomeTec  := AllTrim(Posicione("AA1", 1, xFilial("AA1") + cConsulAnterior, "AA1_NOMTEC"))
+            cEmailTec := AllTrim(Posicione("AA1", 1, xFilial("AA1") + cConsulAnterior, "AA1_EMAIL"))
+
+            If !Empty(cEmailTec)
+                cCorpo := CNSA_CANCEL_FRONT(cNomeCli, cDataAge, cHmini, cHmfim, cIdCh, cMotivo, cExclPor)
+                CNSA_ENVIAEMAIL(cEmailTec, "Cancelamento do Chamado " + cIdCh, cCorpo, "apia@apia.com.br")
+            Else
+                ConOut("CNSA_EXCLUIR: tecnico " + cConsulAnterior + " sem AA1_EMAIL cadastrado - e-mail de cancelamento nao enviado.")
+            EndIf
+        EndIf
+
+        oJson['sucesso']  := .T.
+        oJson['idCh']     := cIdCh
+        oJson['mensagem'] := "Chamado excluido com sucesso."
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+////////////////////////////////////////////////////////////////////////////////
+// Autenticacao Microsoft Graph.
+//
+// FIX: tenant/client/secret NAO ficam mais hardcoded no fonte (risco de
+// vazamento via repositorio/RPO). Seguem o mesmo padrao ja usado pra
+// MV_CNSAAUT: parametros de sistema via GETMV. Cadastrar em Configurador:
+//   MV_CNSATEN -> Tenant ID do Azure AD
+//   MV_CNSACLI -> Client ID do App Registration
+//   MV_CNSASEC -> Client Secret do App Registration
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_TOKEN()
+    Local cTenant := AllTrim(GETMV("MV_CNSATEN"))
+    Local cClient := AllTrim(GETMV("MV_CNSACLI"))
+    Local cSecret := AllTrim(GETMV("MV_CNSASEC"))
+    Local oRest, oJson, cBody, cToken := ""
+
+    If Empty(cTenant) .Or. Empty(cClient) .Or. Empty(cSecret)
+        ConOut("CNSA_TOKEN: MV_CNSATEN/MV_CNSACLI/MV_CNSASEC nao configurados no Configurador - e-mail nao sera enviado.")
+        Return ""
+    EndIf
+
+    cBody := "grant_type=client_credentials"
+    cBody += "&client_id="     + CNSA_URLENC(cClient)
+    cBody += "&client_secret=" + CNSA_URLENC(cSecret)
+    cBody += "&scope="         + CNSA_URLENC("https://graph.microsoft.com/.default")
+
+    oRest := FWRest():New("https://login.microsoftonline.com")
+    oRest:setPath("/" + cTenant + "/oauth2/v2.0/token")
+    oRest:SetPostParams(cBody)
+    If !oRest:Post({"Content-Type: application/x-www-form-urlencoded"})
+        ConOut("CNSA_TOKEN: falha no POST de token (Azure AD): " + oRest:GetLastError())
+        FreeObj(oRest)
+        Return ""
+    EndIf
+
+    oJson := JsonObject():New()
+    If Empty(oJson:FromJson(oRest:GetResult())) .And. ValType(oJson["access_token"]) == "C"
+        cToken := oJson["access_token"]
+    Else
+        ConOut("CNSA_TOKEN: resposta do Azure AD sem access_token: " + oRest:GetResult())
+    EndIf
+    FreeObj(oJson)
+    FreeObj(oRest)
+Return cToken
+
+////////////////////////////////////////////////////////////////////////////////
+// JOB AGENDADO (Schedule/Agendador de Job do Protheus) - substitui o gatilho
+// antigo do CNSA001 (rodava CNSA_GERACHAM toda vez que alguem abria a tela
+// classica; aqui nao ha tela sendo aberta, entao precisa de um job de
+// verdade). Cadastrar em SIGACFG > Ambiente > Schedule (ou no appserver.ini,
+// secao [JOBSCHEDULER], dependendo da versao) apontando pra esta funcao,
+// rodando a cada N minutos.
+//
+// ASSUNCAO A VALIDAR (Henrique, confere isso): estou assumindo que o
+// FWRest():Patch() existe nesse build do TOTVS (usado em CNSA_MARCARLIDO
+// pra marcar o e-mail como lido no Graph). Se nao existir/nao compilar, me
+// avisa que troco pra outra forma de fazer o PATCH.
+////////////////////////////////////////////////////////////////////////////////
+User Function CNSA_JOB_SINCEMAIL()
+    Local nCriados := CNSA_GERACHAM()
+    ConOut("CNSA_JOB_SINCEMAIL: " + AllTrim(Str(nCriados)) + " chamado(s) criado(s) a partir de e-mail(s) novo(s) em apia@apia.com.br.")
+Return
+
+////////////////////////////////////////////////////////////////////////////////
+// Le a caixa apia@apia.com.br (Graph) e cria um chamado (ZA1) por e-mail nao
+// lido ainda nao processado. Porte do CNSA_GERACHAM (CNSA001.PRW), com 1
+// diferenca proposital: aqui SEMPRE marca o e-mail como lido no Graph depois
+// de decidir o que fazer com ele (criar chamado OU pular por ja existir via
+// ZA1_MAILID) - o original nunca fazia isso, entao o filtro isRead=false
+// crescia pra sempre e, com mais de 50 nao lidos acumulados, e-mails novos
+// podiam nunca ser vistos (o $top=50 sem $orderby nao garante pegar os mais
+// recentes primeiro).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_GERACHAM()
+    Local cToken := CNSA_TOKEN()
+    Local oRest, oJson, oArr, oMsg, oFrom, oEnd
+    Local cPath, cId, cAssunto, cNome, cEmail, cNewId
+    Local nI, nCriados := 0
+    Local cDec     := ""
+    Local cDecNome := ""
+    Local aCliente := {}
+    Local cCodCli  := ""
+    Local cLojaCli := ""
+    Local cCorpo   := ""
+    Local oBody    := Nil
+
+    If Empty(cToken)
+        Return -1
+    EndIf
+
+    cPath := "/v1.0/users/apia@apia.com.br/mailFolders/inbox/messages"
+    cPath += "?$filter=isRead%20eq%20false"
+    cPath += "&$select=id,subject,from,receivedDateTime,body"
+    cPath += "&$orderby=receivedDateTime%20desc"
+    cPath += "&$top=50"
+
+    oRest := FWRest():New("https://graph.microsoft.com")
+    oRest:setPath(cPath)
+    // FIX (pedido - sem o corpo o chamado auto-criado fica inutilizavel, so
+    // com o assunto): "Prefer: outlook.body-content-type=text" pede pro
+    // Graph devolver body.content ja em TEXTO PURO em vez de HTML - sem essa
+    // header viria HTML completo (tags, estilos, assinatura), inviavel pra
+    // um campo de anotacao de tamanho limitado.
+    If !oRest:Get({"Authorization: Bearer " + cToken, "Accept: application/json", 'Prefer: outlook.body-content-type="text"'})
+        ConOut("CNSA_GERACHAM: falha no GET de mensagens (Graph): " + oRest:GetLastError())
+        Return -1
+    EndIf
+
+    oJson := JsonObject():New()
+    If !Empty(oJson:FromJson(oRest:GetResult()))
+        ConOut("CNSA_GERACHAM: resposta do Graph invalida: " + oRest:GetResult())
+        FreeObj(oJson)
+        Return -1
+    EndIf
+
+    oArr := oJson:GetJsonObject("value")
+    If ValType(oArr) <> "A"
+        FreeObj(oJson)
+        Return -1
+    EndIf
+
+    For nI := 1 To Len(oArr)
+        oMsg     := oArr[nI]
+        cId      := ""
+        cAssunto := "(sem assunto)"
+        cNome    := ""
+        cEmail   := ""
+        cCodCli  := ""
+        cLojaCli := ""
+        cCorpo   := ""
+        oBody    := Nil
+
+        If ValType(oMsg:GetJsonObject("id")) == "C"
+            cId := oMsg:GetJsonObject("id")
+        EndIf
+
+        If ValType(oMsg:GetJsonObject("subject")) == "C"
+            cAssunto := oMsg:GetJsonObject("subject")
+            cDec     := DecodeUTF8(cAssunto)
+            If ValType(cDec) == "C" .And. !Empty(cDec)
+                cAssunto := cDec
+            EndIf
+            cAssunto := AllTrim(cAssunto)
+            While .T.
+                If Upper(Left(cAssunto, 4)) == "RES:" .Or. Upper(Left(cAssunto, 4)) == "ENC:" .Or. Upper(Left(cAssunto, 4)) == "FWD:"
+                    cAssunto := AllTrim(SubStr(cAssunto, 5))
+                ElseIf Upper(Left(cAssunto, 3)) == "RE:" .Or. Upper(Left(cAssunto, 3)) == "FW:"
+                    cAssunto := AllTrim(SubStr(cAssunto, 4))
+                Else
+                    Exit
+                EndIf
+            EndDo
+        EndIf
+
+        // FIX (pedido - capturar o corpo do e-mail, senao o chamado nasce
+        // inutilizavel so com o assunto): body.content ja vem em texto puro
+        // gracas ao header Prefer acima. DecodeUTF8 mesmo tratamento do
+        // assunto/nome. Truncado em CNSA_ZA2_GRAVAR/TamSX3 mais abaixo.
+        oBody := oMsg:GetJsonObject("body")
+        If ValType(oBody) $ "O|J" .And. ValType(oBody:GetJsonObject("content")) == "C"
+            cCorpo := oBody:GetJsonObject("content")
+            cDec   := DecodeUTF8(cCorpo)
+            If ValType(cDec) == "C" .And. !Empty(cDec)
+                cCorpo := cDec
+            EndIf
+            cCorpo := AllTrim(cCorpo)
+        EndIf
+
+        oFrom := Nil
+        oEnd  := Nil
+        oFrom := oMsg:GetJsonObject("from")
+        If ValType(oFrom) $ "O|J"
+            oEnd := oFrom:GetJsonObject("emailAddress")
+            If ValType(oEnd) $ "O|J"
+                If ValType(oEnd:GetJsonObject("name")) == "C"
+                    cDecNome := DecodeUTF8(oEnd:GetJsonObject("name"))
+                    If ValType(cDecNome) == "C" .And. !Empty(cDecNome)
+                        cNome := cDecNome
+                    Else
+                        cNome := oEnd:GetJsonObject("name")
+                    EndIf
+                EndIf
+                If ValType(oEnd:GetJsonObject("address")) == "C"
+                    cEmail := oEnd:GetJsonObject("address")
+                EndIf
+                aCliente := CNSA_BUSCACLI(cEmail)
+                cCodCli  := aCliente[1]
+                cLojaCli := aCliente[2]
+            EndIf
+        EndIf
+
+        If Empty(cId)
+            Loop
+        EndIf
+
+        If CNSA_CHEXIST(cId)
+            CNSA_MARCARLIDO(cToken, cId)
+            Loop
+        EndIf
+
+        cNewId := GetSXENum("ZA1", "ZA1_IDCH")
+
+        RecLock("ZA1", .T.)
+            ZA1->ZA1_FILIAL := xFilial("ZA1")
+            ZA1->ZA1_IDCH   := cNewId
+            ZA1->ZA1_STATUS := "1"
+            ZA1->ZA1_CONSUL := ""
+            ZA1->ZA1_CLIENT := If(!Empty(cCodCli), cCodCli, "")
+            ZA1->ZA1_LOJA   := If(!Empty(cCodCli), cLojaCli, "")
+            ZA1->ZA1_EMAIL  := cEmail
+            ZA1->ZA1_ASSUNT := cAssunto
+            ZA1->ZA1_DATA   := Date()
+            ZA1->ZA1_MAILID := cId
+        ZA1->(MsUnlock())
+
+        ConfirmSX8()
+
+        // Corpo do e-mail vira a primeira anotacao (ZA2) do chamado - sem
+        // tecnico designado ainda, entao ZA2_CONSUL fica vazio (nao e um
+        // usuario logado gravando, e o job automatico).
+        If !Empty(cCorpo)
+            CNSA_ZA2_GRAVAR(Val(cNewId), "", SubStr(cCorpo, 1, TamSX3("ZA2_DESCRI")[1]))
+        EndIf
+
+        CNSA_MARCARLIDO(cToken, cId)
+        nCriados++
+    Next nI
+
+    FreeObj(oJson)
+Return nCriados
+
+////////////////////////////////////////////////////////////////////////////////
+// Marca uma mensagem como lida no Graph (PATCH), pra ela sair do filtro
+// isRead=false na proxima execucao do job - sem isso a fila de nao-lidos so
+// cresce e o $top=50 pode nunca alcancar e-mails novos.
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_MARCARLIDO(cToken, cMailId)
+    Local oRest := FWRest():New("https://graph.microsoft.com")
+    Local lOk   := .F.
+
+    oRest:setPath("/v1.0/users/apia@apia.com.br/messages/" + cMailId)
+    oRest:SetPostParams('{"isRead":true}')
+
+    lOk := oRest:Patch({"Authorization: Bearer " + cToken, "Content-Type: application/json"})
+    If !lOk
+        ConOut("CNSA_MARCARLIDO: falha ao marcar mensagem " + cMailId + " como lida: " + oRest:GetLastError())
+    EndIf
+    FreeObj(oRest)
+Return lOk
+
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_CHEXIST(cMailId)
+    Local lExiste := .F.
+    Local cAlias  := GetNextAlias()
+
+    BeginSql Alias cAlias
+        SELECT ZA1_IDCH
+        FROM %Table:ZA1% ZA1
+        WHERE ZA1_FILIAL = %xFilial:ZA1%
+          AND ZA1_MAILID = %Exp:cMailId%
+          AND %NotDel%
+    EndSql
+
+    lExiste := !(cAlias)->(Eof())
+    (cAlias)->(DbCloseArea())
+Return lExiste
+
+////////////////////////////////////////////////////////////////////////////////
+// Busca o cliente pelo e-mail do remetente. Porte identico do CNSA_BUSCACLI
+// (CNSA001.PRW):
+// 1) SU5 -> AC8 -> SA1 (contato oficial)
+// 2) Fallback: SA1 por e-mail exato
+// 3) Fallback: SA1 por dominio
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_BUSCACLI(cEmail)
+    Local cAlias   := GetNextAlias()
+    Local cCod     := ""
+    Local cLoja    := ""
+    Local cContat  := ""
+    Local cDominio := ""
+    Local nPos     := 0
+
+    BeginSql Alias cAlias
+        SELECT U5_CODCONT
+        FROM %Table:SU5% SU5
+        WHERE U5_EMAIL = %Exp:cEmail%
+          AND %NotDel%
+    EndSql
+    If !(cAlias)->(Eof())
+        cContat := AllTrim((cAlias)->U5_CODCONT)
+    EndIf
+    (cAlias)->(DbCloseArea())
+
+    If !Empty(cContat)
+        cAlias := GetNextAlias()
+        BeginSql Alias cAlias
+            SELECT AC8_CODENT
+            FROM %Table:AC8% AC8
+            WHERE AC8_FILIAL = %xFilial:AC8%
+              AND AC8_CODCON = %Exp:cContat%
+              AND AC8_ENTIDA = 'SA1'
+              AND %NotDel%
+        EndSql
+        If !(cAlias)->(Eof())
+            cCod  := Left(AllTrim((cAlias)->AC8_CODENT), 6)
+            cLoja := Right(AllTrim((cAlias)->AC8_CODENT), 2)
+        EndIf
+        (cAlias)->(DbCloseArea())
+
+        If !Empty(cCod)
+            Return {cCod, cLoja}
+        EndIf
+    EndIf
+
+    cAlias := GetNextAlias()
+    BeginSql Alias cAlias
+        SELECT A1_COD, A1_LOJA
+        FROM %Table:SA1% SA1
+        WHERE A1_FILIAL = %xFilial:SA1%
+          AND A1_EMAIL  = %Exp:cEmail%
+          AND %NotDel%
+        ORDER BY A1_COD, A1_LOJA
+    EndSql
+    If !(cAlias)->(Eof())
+        cCod  := AllTrim((cAlias)->A1_COD)
+        cLoja := AllTrim((cAlias)->A1_LOJA)
+    EndIf
+    (cAlias)->(DbCloseArea())
+
+    If !Empty(cCod)
+        Return {cCod, cLoja}
+    EndIf
+
+    nPos := At("@", cEmail)
+    If nPos == 0
+        Return {"", ""}
+    EndIf
+    cDominio := "%" + SubStr(cEmail, nPos)
+
+    cAlias := GetNextAlias()
+    BeginSql Alias cAlias
+        SELECT A1_COD, A1_LOJA
+        FROM %Table:SA1% SA1
+        WHERE A1_FILIAL = %xFilial:SA1%
+          AND A1_EMAIL  LIKE %Exp:cDominio%
+          AND %NotDel%
+        ORDER BY A1_COD, A1_LOJA
+    EndSql
+    If !(cAlias)->(Eof())
+        cCod  := AllTrim((cAlias)->A1_COD)
+        cLoja := AllTrim((cAlias)->A1_LOJA)
+    EndIf
+    (cAlias)->(DbCloseArea())
+
+Return {cCod, cLoja}
+
+////////////////////////////////////////////////////////////////////////////////
+// FIX (item 4 do pedido "Verificacao e Envio de E-mails" - encode/decode
+// UTF-8): o corpo HTML e o assunto sao montados com texto vindo direto de
+// tabelas do Protheus (AA1_NOMTEC, A1_NOME, ZA1_ASSUNT etc.), que fica em
+// ANSI (CP1252) na memoria do ADVPL. O Graph espera o JSON em UTF-8 - sem
+// essa conversao, nome/assunto com acento (ç, ã, é...) chegam corrompidos
+// no e-mail. EncodeUtf8() (funcao nativa AdvPL) faz a conversao ANSI -> UTF-8
+// bytes antes do JSON-escape. Ponto unico de conversao (aqui), assim quem
+// monta cCorpo/cAssunto (CNSA_EMAIL_FRONT, CNSA_CANCEL_FRONT) nao precisa se
+// preocupar com encoding.
+Static Function CNSA_ENVIAEMAIL(cPara, cAssunto, cCorpo, cDe)
+    Local cToken  := CNSA_TOKEN()
+    Local oRest   := Nil
+    Local cJson   := ""
+    Local aHeader := {}
+    Local lOk      := .F.
+    Local cAssuntoUtf8 := ""
+    Local cCorpoUtf8    := ""
+
+    If Empty(cToken) .Or. Empty(cPara)
+        ConOut("CNSA_ENVIAEMAIL: nao enviado - " + If(Empty(cToken), "token vazio (ver CNSA_TOKEN)", "destinatario (cPara) vazio - AA1_EMAIL nao cadastrado?"))
+        Return .F.
+    EndIf
+
+    cAssuntoUtf8 := EncodeUtf8(cAssunto)
+    cCorpoUtf8   := EncodeUtf8(cCorpo)
+
+    cJson := '{'
+    cJson +=   '"message": {'
+    cJson +=     '"subject": "' + CNSA_JSONESC(cAssuntoUtf8) + '",'
+    cJson +=     '"body": {'
+    cJson +=       '"contentType": "HTML",'
+    cJson +=       '"content": "' + CNSA_JSONESC(cCorpoUtf8) + '"'
+    cJson +=     '},'
+    cJson +=     '"toRecipients": [{'
+    cJson +=       '"emailAddress": {'
+    cJson +=         '"address": "' + CNSA_JSONESC(cPara) + '"'
+    cJson +=       '}'
+    cJson +=     '}]'
+    cJson +=   '},'
+    cJson +=   '"saveToSentItems": "true"'
+    cJson += '}'
+
+    oRest := FWRest():New("https://graph.microsoft.com")
+    oRest:setPath("/v1.0/users/" + cDe + "/sendMail")
+    oRest:SetPostParams(cJson)
+
+    aHeader := {}
+    aAdd(aHeader, "Authorization: Bearer " + cToken)
+    aAdd(aHeader, "Content-Type: application/json")
+
+    oRest:Post(aHeader)
+
+    lOk := (oRest:GetLastError() == "202 Accepted" .Or. Empty(oRest:GetLastError()))
+    If !lOk
+        ConOut("CNSA_ENVIAEMAIL: falha no POST sendMail (Graph) para " + cPara + ": " + oRest:GetLastError() + " | " + oRest:GetResult())
+    EndIf
+    FreeObj(oRest)
+
+Return lOk
+
+Static Function CNSA_ASSUMIR(cIdCh)
+    Local cConsultorSessao := ""
+    Local cFase            := ""
+    Local cNomeTec         := ""
+    Local oJson            := JsonObject():New()
+    Local oErro            := Nil
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        cConsultorSessao := Posicione("AA1", 4, xFilial("AA1") + __cUserId, "AA1_CODTEC")
+        If Empty(cConsultorSessao)
+            // FIX: faltava o status HTTP (400) - o array so tinha 1 posicao
+            // (a string do JSON), o que quebrava o SetStatus(aResultado[1])
+            // no WSMETHOD, pois recebia a string inteira em vez de um numero.
+            Return {400, '{"erro":"Seu usuario nao esta vinculado a nenhum consultor (AA1)."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        If !Empty(AllTrim(ZA1->ZA1_CONSUL))
+            Return {400, '{"erro":"Este chamado ja possui tecnico designado."}'}
+        EndIf
+
+        If ZA1->ZA1_STATUS == "4"
+            Return {400, '{"erro":"Chamado fechado nao pode ser assumido."}'}
+        EndIf
+
+        If ZA1->ZA1_STATUS == "2" .Or. ZA1->ZA1_STATUS == "3"
+            Return {400, '{"erro":"Chamado pendente nao pode ser assumido."}'}
+        EndIf
+
+        If Empty(AllTrim(ZA1->ZA1_CLIENT))
+            Return {400, '{"erro":"O chamado precisa ter um cliente definido antes de ser assumido."}'}
+        EndIf
+
+        If Empty(AllTrim(ZA1->ZA1_PROJ))
+            Return {400, '{"erro":"O chamado precisa ter um projeto definido antes de ser assumido."}'}
+        EndIf
+
+        cFase := Posicione("AF8", 1, xFilial("AF8") + AllTrim(ZA1->ZA1_PROJ), "AF8_FASE")
+        If AllTrim(cFase) <> "03"
+            Return {400, '{"erro":"O chamado so pode ser assumido com projeto em execucao (fase 03)."}'}
+        EndIf
+
+        If Empty(AllTrim(ZA1->ZA1_TAREFA))
+            Return {400, '{"erro":"O chamado precisa ter uma tarefa definida antes de ser assumido."}'}
+        EndIf
+
+        RecLock("ZA1", .F.)
+            ZA1->ZA1_CONSUL := cConsultorSessao
+            ZA1->ZA1_STATUS := "2"
+        ZA1->(MsUnlock())
+
+        // E-mail de designacao pro proprio tecnico que assumiu (auto-atribuicao).
+        // Regra unificada com Incluir/Alterar - ver CNSA_DISPARA_DESIGNACAO.
+        cNomeTec := AllTrim(Posicione("AA1", 1, xFilial("AA1") + cConsultorSessao, "AA1_NOMTEC"))
+        CNSA_DISPARA_DESIGNACAO(cIdCh, cConsultorSessao)
+
+        oJson['sucesso'] := .T.
+        oJson['idCh']    := cIdCh
+        oJson['status']  := "2"
+        oJson['tecnico'] := EncodeUtf8(cNomeTec)
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+////////////////////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+//////////////////////////////////////////////////////////////////////////
+//CORPO DO EMAIL DE INCLUSAO EM HTML
+//////////////////////////////////////////////////////////////////////////
+Static Function CNSA_EMAIL_FRONT(cNomeTec, cIdCh, cCliente, cAssunto, cDataAge, cHmini, cHmfim, cNomeDe, cTipo)
+    Local cHtml := ""
+
+    Local cTipoTexto := IIf(Empty(cTipo), "DESIGNACAO", cTipo)
+
+    cHtml := '<div style="font-family:Arial,sans-serif;max-width:600px;border:1px solid #cccccc;border-radius:8px;overflow:hidden">'
+
+    cHtml += '<div style="background-color:#1a7fc1;padding:20px;text-align:center">'
+    cHtml += '<h2 style="color:#ffffff;margin:0;font-size:18px">Apia Consultoria e Sistemas</h2>'
+    cHtml += '<p style="color:#d0e8f8;margin:5px 0 0 0;font-size:13px;font-style:italic">Voce esta recebendo a <b>' + cTipoTexto + '</b> de um chamado.<br>Por favor, verifique os dados abaixo</p>'
+    cHtml += '</div>'
+
+    cHtml += '<table style="width:100%;border-collapse:collapse">'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px;width:35%"><b>Tecnico</b></td><td style="padding:10px 15px">' + cNomeTec + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Chamado</b></td><td style="padding:10px 15px">' + cIdCh + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Cliente</b></td><td style="padding:10px 15px">' + cCliente + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Servico</b></td><td style="padding:10px 15px">' + cAssunto + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Data</b></td><td style="padding:10px 15px">' + cDataAge + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Hora</b></td><td style="padding:10px 15px">' + cHmini + ' ate ' + cHmfim + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Designado por</b></td><td style="padding:10px 15px">' + cNomeDe + '</td></tr>'
+    cHtml += '</table>'
+
+    cHtml += '<div style="background-color:#0d5a8a;padding:12px;text-align:center">'
+    cHtml += '<p style="color:#ffffff;margin:0;font-size:12px">Apia Consultoria e Sistemas - TOTVS Business Partner</p>'
+    cHtml += '</div>'
+
+    cHtml += '</div>'
+
+Return cHtml
+
+
+//////////////////////////////////////////////////////////////////////////
+//CORPO DO EMAIL DE CANCELAMENTO EM HTML
+//////////////////////////////////////////////////////////////////////////
+Static Function CNSA_CANCEL_FRONT(cCliente, cDataAge, cHmini, cHmfim, cChamado, cMotivo, cExcluidoPor)
+    Local cHtml := ""
+
+    cHtml := '<div style="font-family:Arial,sans-serif;max-width:600px;border:1px solid #cccccc;border-radius:8px;overflow:hidden">'
+
+    cHtml += '<div style="background-color:#0d5a8a;padding:20px;text-align:center">'
+    cHtml += '<h2 style="color:#ffffff;margin:0;font-size:18px">Apia Consultoria e Sistemas</h2>'
+    cHtml += '<p style="color:#d0e8f8;margin:5px 0 0 0;font-size:13px;font-style:italic">Voce esta recebendo o <b>CANCELAMENTO</b> de um chamado.<br>Por favor, verifique os dados abaixo</p>'
+    cHtml += '</div>'
+
+    cHtml += '<table style="width:100%;border-collapse:collapse">'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px;width:35%"><b>Cliente</b></td><td style="padding:10px 15px">' + cCliente + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Data</b></td><td style="padding:10px 15px">' + cDataAge + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Horario</b></td><td style="padding:10px 15px">' + cHmini + ' - ' + cHmfim + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Chamado</b></td><td style="padding:10px 15px">' + cChamado + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Motivo exclusao</b></td><td style="padding:10px 15px">' + cMotivo + '</td></tr>'
+    cHtml += '<tr style="background-color:#1a7fc1;color:#ffffff"><td style="padding:10px 15px"><b>Excluido por</b></td><td style="padding:10px 15px">' + cExcluidoPor + '</td></tr>'
+    cHtml += '</table>'
+
+    cHtml += '<div style="background-color:#0d5a8a;padding:12px;text-align:center">'
+    cHtml += '<p style="color:#ffffff;margin:0;font-size:12px">Apia Consultoria e Sistemas - TOTVS Business Partner</p>'
+    cHtml += '</div>'
+
+    cHtml += '</div>'
+
+Return cHtml
+
+////////////////////////////////////////////////////////////////////////////////
+// E-mail de designacao de tecnico - REGRA DE NEGOCIO (confirmada por
+// Henrique): "o email so e disparado quando o assumir tem o nome daquele
+// tecnico, seja assumindo ou redesignando ele, sempre e o tecnico - o email
+// e para o tecnico que foi designado no chamado". Ou seja, NAO existe um
+// e-mail de "Inclusao" com corpo/regra proprios: e o MESMO e-mail de
+// designacao, disparado em QUALQUER acao que resulte num tecnico (ZA1_CONSUL)
+// definido/alterado no chamado:
+//   - Incluir  -> se o chamado ja nasce com consultor preenchido (manual ou
+//                 auto-preenchido pelo tecnico da sessao)
+//   - Alterar  -> se o campo Consultor for alterado pra um tecnico diferente
+//                 do que estava antes ("redesignando")
+//   - Assumir  -> sempre, ja que so acontece quando ZA1_CONSUL estava vazio
+// Funcao compartilhada pelas 3 chamadas acima, pra nao duplicar a logica de
+// montar o corpo/buscar nome+email do tecnico.
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_DISPARA_DESIGNACAO(cIdCh, cCodConsultorNovo)
+    Local cNomeTec  := ""
+    Local cEmailTec := ""
+    Local cNomeCli  := ""
+    Local cAssunto  := ""
+    Local cDataAge  := DToC(Date())
+    Local cCorpo    := ""
+
+    If Empty(cCodConsultorNovo)
+        Return .F.
+    EndIf
+
+    cNomeTec  := AllTrim(Posicione("AA1", 1, xFilial("AA1") + cCodConsultorNovo, "AA1_NOMTEC"))
+    cEmailTec := AllTrim(Posicione("AA1", 1, xFilial("AA1") + cCodConsultorNovo, "AA1_EMAIL"))
+
+    If Empty(cEmailTec)
+        ConOut("CNSA_DISPARA_DESIGNACAO: tecnico " + cCodConsultorNovo + " sem AA1_EMAIL cadastrado - e-mail de designacao nao enviado.")
+        Return .F.
+    EndIf
+
+    dbSelectArea("ZA1")
+    ZA1->(DbSetOrder(1))
+    If ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+        cAssunto := AllTrim(ZA1->ZA1_ASSUNT)
+        cNomeCli := AllTrim(Posicione("SA1", 1, xFilial("SA1") + AllTrim(ZA1->ZA1_CLIENT) + AllTrim(ZA1->ZA1_LOJA), "A1_NOME"))
+        If ValType(ZA1->ZA1_DATA) == "D" .And. !Empty(ZA1->ZA1_DATA)
+            cDataAge := DToC(ZA1->ZA1_DATA)
+        ElseIf ValType(ZA1->ZA1_DATA) == "C" .And. Len(AllTrim(ZA1->ZA1_DATA)) == 8
+            cDataAge := DToC(STOD(AllTrim(ZA1->ZA1_DATA)))
+        EndIf
+    EndIf
+
+    cCorpo := CNSA_EMAIL_FRONT(cNomeTec, cIdCh, cNomeCli, cAssunto, cDataAge, "00:00", "00:00", cNomeTec, "DESIGNACAO")
+
+Return CNSA_ENVIAEMAIL(cEmailTec, "Chamado Designado " + cIdCh, cCorpo, "apia@apia.com.br")
+
+////////////////////////////////////////////////////////////////////////////////
+// INCLUIR - WSRESTFUL proprio (CNSACHAMADOSINCLUIR), mesmo padrao ja usado no
+// Assumir/Excluir (RecLock direto na ZA1, sem passar pelo FwModel remoto).
+//
+// Campos obrigatorios/opcionais confirmados pela tela real "Registro de
+// Chamados - INCLUIR" do CNSA001 (Henrique mandou print): obrigatorios sao
+// Assunto, Dt Abertura, Status (fixo "1" aqui, nem exposto), Tipo, Projeto
+// e Tarefa; Cliente/Loja/Consultor/Email do Cliente sao opcionais.
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSINCLUIR DESCRIPTION "Inclui um novo chamado (ZA1) com status Aberto" FORMAT APPLICATION_JSON
+
+    WSDATA assunto      AS CHARACTER OPTIONAL
+    WSDATA dtAbertura   AS CHARACTER OPTIONAL
+    WSDATA tipo         AS CHARACTER OPTIONAL
+    WSDATA codCliente   AS CHARACTER OPTIONAL
+    WSDATA lojaCliente  AS CHARACTER OPTIONAL
+    WSDATA emailCliente AS CHARACTER OPTIONAL
+    WSDATA codConsultor AS CHARACTER OPTIONAL
+    WSDATA projeto      AS CHARACTER OPTIONAL
+    WSDATA tarefa       AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Inclui um chamado - ver CNSA_INCLUIR pra lista completa de campos"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE assunto, dtAbertura, tipo, codCliente, lojaCliente, emailCliente, codConsultor, projeto, tarefa WSSERVICE CNSACHAMADOSINCLUIR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    // FIX (acentos virando caractere de substituicao no front): o WSRESTFUL
+    // classico nao converte UTF-8 (vindo do Angular) pra ANSI/CP1252 (usado
+    // internamente pelo ADVPL) sozinho - precisa de DecodeUTF8 explicito no
+    // texto livre (assunto), mesmo padrao ja usado em CNSA_GERACHAM pro
+    // assunto do e-mail.
+    aResultado := CNSA_INCLUIR(DecodeUTF8(AllTrim(::assunto)), AllTrim(::dtAbertura), AllTrim(::tipo), ;
+        AllTrim(::codCliente), AllTrim(::lojaCliente), AllTrim(::emailCliente), ;
+        AllTrim(::codConsultor), AllTrim(::projeto), AllTrim(::tarefa))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Logica real do Incluir - fora do WSMETHOD, devolve {nStatusHttp, cCorpoJson}.
+//
+// ASSUNCOES A VALIDAR ANTES DE COMPILAR (Henrique, confere isso):
+// 1) ZA1_IDCH precisa ter grupo de numeracao configurado no SX5 pro
+//    GetSxeNum()/ConfirmSX8() funcionar (padrao TOTVS de auto-numeracao com
+//    reserva/confirmacao, evita duplicidade em uso concorrente). Se ZA1 nao
+//    tiver isso configurado, essa chamada vai estourar erro - nesse caso a
+//    alternativa e gerar o proximo Id via MAX(ZA1_IDCH)+1 em SQL (me avisa
+//    que eu troco).
+// 2) ZA1_DATA e Date (D), nao Character(8) - erro em producao confirmou
+//    ("Invalid data type" no RecLock). O front manda dtAbertura em ISO
+//    (AAAA-MM-DD) - tiro os hifens e converto com STOD() antes de gravar.
+// 3) ZA1_TIPO e ZA1_EMAIL sao CHUTES de nome de campo - nao apareceram em
+//    nenhum lugar do codigo ate agora, so na tela que voce mandou ("Tipo" e
+//    "Email Client"). Se o nome real for outro, so trocar aqui.
+// 4) Status fica fixo em "1" (Aberto) e nem foi exposto como parametro -
+//    decisao consciente pra nao deixar o portal criar chamado ja
+//    fechado/pendente. Se quiser expor, eu tiro o fixo e viro parametro.
+// 5) NAO valida se codCliente+lojaCliente/projeto/tarefa existem de fato
+//    nas tabelas correspondentes antes de gravar - so grava o que foi
+//    informado (mesma cautela do Assumir nao se aplica aqui de proposito,
+//    pra nao duplicar a regra de "projeto fase 03" - isso já é validado
+//    depois, no Assumir).
+// 6) Consultor, se vier vazio, e preenchido automaticamente com o tecnico
+//    da sessao logada (Posicione AA1 por __cUserId) - mesmo comportamento
+//    que a tela mostrou (campo Consultor pre-preenchido, mas sem obrigar).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_INCLUIR(cAssunto, cDtAbertura, cTipo, cCodCliente, cLojaCliente, cEmailCliente, cCodConsultor, cProjeto, cTarefa)
+    Local cIdCh := ""
+    Local oJson := JsonObject():New()
+    Local oErro := Nil
+
+    Begin Sequence
+
+        If Empty(cAssunto)
+            Return {400, '{"erro":"Informe o assunto do chamado."}'}
+        EndIf
+
+        If Empty(cTipo)
+            Return {400, '{"erro":"Informe o tipo do chamado."}'}
+        EndIf
+
+        If Empty(cProjeto)
+            Return {400, '{"erro":"Informe o projeto."}'}
+        EndIf
+
+        If Empty(cTarefa)
+            Return {400, '{"erro":"Informe a tarefa."}'}
+        EndIf
+
+        Default cLojaCliente := "01"
+
+        If Empty(cDtAbertura)
+            cDtAbertura := DTOS(Date())
+        Else
+            cDtAbertura := StrTran(cDtAbertura, "-", "")
+        EndIf
+
+        If Empty(cCodConsultor)
+            cCodConsultor := Posicione("AA1", 4, xFilial("AA1") + __cUserId, "AA1_CODTEC")
+        EndIf
+
+        cIdCh := GetSxeNum("ZA1", "ZA1_IDCH")
+
+        RecLock("ZA1", .T.)
+            ZA1->ZA1_FILIAL := xFilial("ZA1")
+            ZA1->ZA1_IDCH   := cIdCh
+            ZA1->ZA1_ASSUNT := cAssunto
+            ZA1->ZA1_DATA   := STOD(cDtAbertura)
+            ZA1->ZA1_STATUS := "1"
+            ZA1->ZA1_TIPO   := cTipo
+            ZA1->ZA1_CLIENT := cCodCliente
+            ZA1->ZA1_LOJA   := cLojaCliente
+            ZA1->ZA1_EMAIL  := cEmailCliente
+            ZA1->ZA1_CONSUL := cCodConsultor
+            ZA1->ZA1_PROJ   := cProjeto
+            ZA1->ZA1_TAREFA := cTarefa
+        ZA1->(MsUnlock())
+
+        ConfirmSX8()
+
+        // E-mail de designacao - so dispara se o chamado ja nasce com um
+        // tecnico definido (cCodConsultor aqui ja passou pelo Default acima:
+        // ou foi informado no formulario, ou foi auto-preenchido com o
+        // tecnico da sessao logada). Ver CNSA_DISPARA_DESIGNACAO.
+        CNSA_DISPARA_DESIGNACAO(cIdCh, cCodConsultor)
+
+        oJson['sucesso']  := .T.
+        oJson['idCh']     := cIdCh
+        oJson['mensagem'] := "Chamado incluido com sucesso."
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        RollBackSX8()
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ALTERAR - WSRESTFUL proprio (CNSACHAMADOSALTERAR), mesmo padrao.
+//
+// FIX (pedido "Editar deve ficar exatamente igual ao Incluir, mesma
+// assinatura de metodos e estrutura" - confirmado por Henrique: "igual no
+// estilo do template, use os parametros que te mandei"): o Alterar agora
+// aceita o MESMO conjunto de campos do Incluir (assunto, dtAbertura, tipo,
+// codCliente/lojaCliente, emailCliente, codConsultor, projeto, tarefa).
+// Continua sendo alteracao PARCIAL - so troca o que vier preenchido, mesmo
+// comportamento de antes, so que agora vale pra todos os campos, nao so
+// assunto/cliente.
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSALTERAR DESCRIPTION "Altera um chamado (ZA1) ainda aberto - mesmos campos do Incluir" FORMAT APPLICATION_JSON
+
+    WSDATA idCh            AS CHARACTER OPTIONAL
+    WSDATA assunto         AS CHARACTER OPTIONAL
+    WSDATA dtAbertura      AS CHARACTER OPTIONAL
+    WSDATA tipo            AS CHARACTER OPTIONAL
+    WSDATA codCliente      AS CHARACTER OPTIONAL
+    WSDATA lojaCliente     AS CHARACTER OPTIONAL
+    WSDATA emailCliente    AS CHARACTER OPTIONAL
+    WSDATA codConsultor    AS CHARACTER OPTIONAL
+    WSDATA projeto         AS CHARACTER OPTIONAL
+    WSDATA tarefa          AS CHARACTER OPTIONAL
+    WSDATA limparCliente   AS CHARACTER OPTIONAL
+    WSDATA limparConsultor AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Altera um chamado (idCh) - ver CNSA_ALTERAR pra lista completa de campos"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE idCh, assunto, dtAbertura, tipo, codCliente, lojaCliente, emailCliente, ;
+    codConsultor, projeto, tarefa, limparCliente, limparConsultor WSSERVICE CNSACHAMADOSALTERAR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    // FIX (mesmo problema de acentos do Incluir) - DecodeUTF8 no assunto.
+    aResultado := CNSA_ALTERAR(AllTrim(::idCh), DecodeUTF8(AllTrim(::assunto)), AllTrim(::dtAbertura), AllTrim(::tipo), ;
+        AllTrim(::codCliente), AllTrim(::lojaCliente), AllTrim(::emailCliente), AllTrim(::codConsultor), ;
+        AllTrim(::projeto), AllTrim(::tarefa), AllTrim(::limparCliente) == "1", AllTrim(::limparConsultor) == "1")
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Logica real do Alterar - fora do WSMETHOD, devolve {nStatusHttp, cCorpoJson}.
+// Bloqueia alteracao de chamado fechado (status "4"), mesma cautela do Assumir.
+//
+// E-mail de redesignacao (item 6 confirmado por Henrique): se codConsultor
+// vier preenchido E for diferente do consultor que o chamado tinha antes,
+// dispara o mesmo e-mail de designacao pro NOVO tecnico (CNSA_DISPARA_DESIGNACAO).
+//
+// FIX (botao "limpar" da lupa no front): alteracao e PARCIAL - cCodCliente/
+// cCodConsultor vazios sempre significaram "nao mexer nesse campo", entao
+// limpar o campo no front (mandando vazio) nunca chegava a zerar no ADVPL, o
+// valor antigo sempre sobrevivia. lLimparCliente/lLimparConsultor sao a
+// sinalizacao explicita de "zera de verdade" - so fazem sentido quando o
+// campo correspondente vier vazio (senao o valor novo already diz o que
+// fazer).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_ALTERAR(cIdCh, cAssunto, cDtAbertura, cTipo, cCodCliente, cLojaCliente, ;
+    cEmailCliente, cCodConsultor, cProjeto, cTarefa, lLimparCliente, lLimparConsultor)
+    Local oJson             := JsonObject():New()
+    Local oErro             := Nil
+    Local cConsultorAnterior := ""
+    Local lTemAlgumCampo    := !Empty(cAssunto) .Or. !Empty(cDtAbertura) .Or. !Empty(cTipo) .Or. ;
+        !Empty(cCodCliente) .Or. !Empty(cEmailCliente) .Or. !Empty(cCodConsultor) .Or. ;
+        !Empty(cProjeto) .Or. !Empty(cTarefa) .Or. lLimparCliente .Or. lLimparConsultor
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        If !lTemAlgumCampo
+            Return {400, '{"erro":"Informe ao menos um campo para alterar."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        If ZA1->ZA1_STATUS == "4"
+            Return {400, '{"erro":"Chamado fechado nao pode ser alterado."}'}
+        EndIf
+
+        cConsultorAnterior := AllTrim(ZA1->ZA1_CONSUL)
+
+        RecLock("ZA1", .F.)
+            If !Empty(cAssunto)
+                ZA1->ZA1_ASSUNT := cAssunto
+            EndIf
+            If !Empty(cDtAbertura)
+                ZA1->ZA1_DATA := STOD(StrTran(cDtAbertura, "-", ""))
+            EndIf
+            If !Empty(cTipo)
+                ZA1->ZA1_TIPO := cTipo
+            EndIf
+            If lLimparCliente
+                ZA1->ZA1_CLIENT := ""
+                ZA1->ZA1_LOJA   := ""
+            ElseIf !Empty(cCodCliente)
+                ZA1->ZA1_CLIENT := cCodCliente
+                ZA1->ZA1_LOJA   := If(Empty(cLojaCliente), "01", cLojaCliente)
+            EndIf
+            If !Empty(cEmailCliente)
+                ZA1->ZA1_EMAIL := cEmailCliente
+            EndIf
+            If lLimparConsultor
+                ZA1->ZA1_CONSUL := ""
+            ElseIf !Empty(cCodConsultor)
+                ZA1->ZA1_CONSUL := cCodConsultor
+            EndIf
+            If !Empty(cProjeto)
+                ZA1->ZA1_PROJ := cProjeto
+            EndIf
+            If !Empty(cTarefa)
+                ZA1->ZA1_TAREFA := cTarefa
+            EndIf
+        ZA1->(MsUnlock())
+
+        // Redesignacao: so dispara e-mail se o consultor mudou de verdade
+        // (evita reenviar e-mail toda vez que o formulario e salvo sem
+        // trocar o tecnico).
+        If !Empty(cCodConsultor) .And. cCodConsultor <> cConsultorAnterior
+            CNSA_DISPARA_DESIGNACAO(cIdCh, cCodConsultor)
+        EndIf
+
+        oJson['sucesso']  := .T.
+        oJson['idCh']     := cIdCh
+        oJson['mensagem'] := "Chamado alterado com sucesso."
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// AGENDAR - WSRESTFUL proprio (CNSACHAMADOSAGENDAR). Cria agendamento(s) de
+// verdade na SZ6, com os campos confirmados na tela real "Model Agendas -
+// Nova Agenda" do CNSA001 (Henrique mandou print). Isso substitui a ideia
+// original de abrir o cnsaagenda via FwCallApp (que nao funciona chamado
+// via REST/Angular, ver comentario no bloco VERAGENDA abaixo) - em vez de
+// tentar abrir o outro app, este endpoint replica a mesma gravacao que a
+// tela "Nova Agenda" faz, direto no SZ6.
+//
+// EXTENSAO NOSSA (nao existe na tela original): dataInicio/dataFim formam
+// um INTERVALO (usando po-datepicker-range no front) - se vierem diferentes,
+// cria um registro de agenda POR DIA no intervalo, cada um com os mesmos
+// dados (mesmo tecnico/horario/cliente/etc). Intervalo maximo de 730 dias
+// (2 anos) - trava de seguranca contra loop gigante/timeout, nao regra de
+// negocio (limite antigo era 60 dias, aumentado a pedido).
+//
+// FIX: Cliente/Descricao/Projeto/Agendador estavam com nome ERRADO -
+// conferido contra CNSA_CRIAAGENDA_INT (CNSA001.PRW), que grava na MESMA
+// SZ6 pelo caminho antigo (botao "Agendar" classico + prompt automatico
+// pos-Incluir/Alterar) e ja funciona de verdade em producao. Os 4 corrigidos
+// abaixo (->) - resto confirmado/sem conflito com o caminho antigo:
+//   Tecnico       -> Z6_TECNICO
+//   Sequencia     -> Z6_SEQ       (gerada aqui automaticamente, MAX+1 por
+//                                   tecnico+data - NAO exposta como parametro,
+//                                   pra evitar duplicidade)
+//   Cliente       -> Z6_CLIENTE  (era Z6_CLIENT)
+//   Loja          -> Z6_LOJA
+//   Descricao     -> Z6_SERVICO  (era Z6_DESC)
+//   Projeto       -> Z6_PROJET   (era Z6_PROJ)
+//   Tarefa        -> Z6_TAREFA
+//   Agendador     -> Z6_QGRAVOU  (era Z6_AGENDADOR; se vazio, uso o nome do
+//                                   tecnico da sessao logada via Posicione
+//                                   AA1/__cUserId)
+//
+// FIX 3 (2026-07-30): FIX 2 abaixo NUNCA foi validado de verdade contra o
+// SX3 real - "confirmado por Henrique" nao pegou 2 nomes: Z6_INTERNA nao
+// existe (RecLock deu "invalid field name"), campo real e Z6_INTERNO; e
+// Z6_TP_HR tambem nao existe, campo real e Z6_TIPO_HR. Confirmado desta vez
+// contra o dicionario de dados de verdade (print do Configurador). Tambem
+// corrigido: Z6_DTAGE e campo Data (D), nao Character - gravar string
+// (DTOS) dava "Invalid data type" no RecLock; CNSA_PROXSEQ_SZ6 recebe Data
+// direto agora em vez de comparar string contra o campo Data (evita
+// conversao implicita ambigua no Oracle via NLS_DATE_FORMAT).
+// FIX 2 - confirmado por Henrique direto no SX3 real da SZ6 (nomes E tipos):
+//   Sequencia     -> Z6_SEQ      Character(3)  - gerada aqui, MAX+1 por
+//                                   tecnico+data (mesmo calculo do CNSA003)
+//   Confirmacao   -> Z6_CONFIRM  Character(3)  - "SIM"/"NAO" (era Z6_CONFIRMA)
+//   Turno         -> Z6_TURNO    NUMERICO(1)   - manha/tarde/ambos (era
+//                                   character - PRECISA Val() na gravacao)
+//   Ag. Interna   -> Z6_INTERNO  Character(3)  - "SIM"/"NAO" (era Z6_AGINT,
+//                                   depois Z6_INTERNA - ambos errados)
+//   Ag. cobravel  -> Z6_COBRAR   Character(3)  - "SIM"/"NAO" (era Z6_AGCOB)
+//   Tipo Agenda   -> Z6_TIPOAG   Character(2)  (era Z6_TIPOAGE)
+//   Revisao       -> Z6_REVISA   Character(4)  (era Z6_REVISAO)
+//   Tipo Hora     -> Z6_TIPO_HR  Character(6)  (era Z6_TIPOHORA, depois
+//                                   Z6_TP_HR - ambos errados)
+// Campos que a tela mostra mas eu NAO implementei (fora de escopo por
+// agora):
+//   - "Anexo" (upload de arquivo - a app nao tem infraestrutura de upload)
+//   - o segundo campo "Data" que aparece cortado no rodape da tela - nao
+//     ficou claro se e um campo real diferente ou um artefato de layout.
+// Data/Tecnico/Sequencia/Inicio/Termino/Cliente/Loja sao os campos com
+// asterisco vermelho (obrigatorios) na tela real - o resto e opcional.
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSAGENDAR DESCRIPTION "Cria agendamento(s) (SZ6) vinculado a um chamado" FORMAT APPLICATION_JSON
+
+    WSDATA idCh        AS CHARACTER OPTIONAL
+    WSDATA dataInicio   AS CHARACTER OPTIONAL
+    WSDATA dataFim      AS CHARACTER OPTIONAL
+    WSDATA codTecnico   AS CHARACTER OPTIONAL
+    WSDATA horaInicio   AS CHARACTER OPTIONAL
+    WSDATA horaFim      AS CHARACTER OPTIONAL
+    WSDATA codCliente   AS CHARACTER OPTIONAL
+    WSDATA lojaCliente  AS CHARACTER OPTIONAL
+    WSDATA descricao    AS CHARACTER OPTIONAL
+    WSDATA confirmacao  AS CHARACTER OPTIONAL
+    WSDATA turno        AS CHARACTER OPTIONAL
+    WSDATA agInterna    AS CHARACTER OPTIONAL
+    WSDATA agCobravel   AS CHARACTER OPTIONAL
+    WSDATA tipoAgenda   AS CHARACTER OPTIONAL
+    WSDATA projeto      AS CHARACTER OPTIONAL
+    WSDATA revisao      AS CHARACTER OPTIONAL
+    WSDATA tarefa       AS CHARACTER OPTIONAL
+    WSDATA tipoHora     AS CHARACTER OPTIONAL
+    WSDATA codAgendador AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Cria agendamento(s) SZ6 - um por dia no intervalo dataInicio..dataFim"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE idCh, dataInicio, dataFim, codTecnico, horaInicio, horaFim, codCliente, ;
+    lojaCliente, descricao, confirmacao, turno, agInterna, agCobravel, tipoAgenda, projeto, ;
+    revisao, tarefa, tipoHora, codAgendador WSSERVICE CNSACHAMADOSAGENDAR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    // FIX (mesmo problema de acentos do Incluir/Alterar) - DecodeUTF8 na descricao.
+    aResultado := CNSA_AGENDAR(AllTrim(::idCh), AllTrim(::dataInicio), AllTrim(::dataFim), ;
+        AllTrim(::codTecnico), AllTrim(::horaInicio), AllTrim(::horaFim), AllTrim(::codCliente), ;
+        AllTrim(::lojaCliente), DecodeUTF8(AllTrim(::descricao)), AllTrim(::confirmacao), AllTrim(::turno), ;
+        AllTrim(::agInterna), AllTrim(::agCobravel), AllTrim(::tipoAgenda), AllTrim(::projeto), ;
+        AllTrim(::revisao), AllTrim(::tarefa), AllTrim(::tipoHora), DecodeUTF8(AllTrim(::codAgendador)))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Calcula a proxima sequencia (Z6_SEQ) pro tecnico+data informados - mesmo
+// espirito do GetSxeNum usado no Incluir, mas aqui e MAX+1 via SQL porque a
+// sequencia e por GRUPO (tecnico+data), nao um numero global - SX5 nao
+// serve bem pra isso.
+//
+// FIX: Z6_DTAGE e campo Data (D) no dicionario - comparar contra uma string
+// AAAAMMDD forcava conversao implicita no Oracle (TO_DATE via NLS_DATE_FORMAT
+// da sessao), o que pode nao bater com o formato esperado e silenciosamente
+// nao encontrar nenhuma linha (MAX sempre vazio, sequencia sempre "001").
+// Recebe Data de verdade agora, sem ambiguidade de formato.
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_PROXSEQ_SZ6(cTecnico, dData)
+    Local cAlias := GetNextAlias()
+    Local nSeq   := 1
+
+    BeginSql Alias cAlias
+        SELECT MAX(SZ6.Z6_SEQ) MAXSEQ
+        FROM %Table:SZ6% SZ6
+        WHERE SZ6.Z6_FILIAL  = %xFilial:SZ6%
+          AND SZ6.Z6_TECNICO = %Exp:cTecnico%
+          AND SZ6.Z6_DTAGE   = %Exp:dData%
+          AND %NotDel%
+    EndSql
+
+    If !(cAlias)->(Eof()) .And. !Empty((cAlias)->MAXSEQ)
+        nSeq := Val((cAlias)->MAXSEQ) + 1
+    EndIf
+    (cAlias)->(DbCloseArea())
+
+Return PadL(AllTrim(Str(nSeq)), 3, "0")
+
+////////////////////////////////////////////////////////////////////////////////
+// Verifica se o tecnico ja tem algum agendamento (SZ6) no mesmo dia cujo
+// horario sobrepoe [cHoraIni, cHoraFim). Formula padrao de intervalos - nao
+// basta comparar so os inicios: existe.HMINI < novo.horaFim E existe.HMFIM >
+// novo.horaInicio. So entre agendamentos do MESMO tecnico - tecnicos
+// diferentes podem ter o mesmo horario de proposito (coparticipacao no mesmo
+// chamado; fluxo ja suportado hoje chamando Agendar uma vez por tecnico, sem
+// mudanca de codigo necessaria).
+// Devolve array de JsonObject {horaInicio, horaFim} dos conflitos
+// encontrados (vazio = sem conflito).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_VERIFICASOBREPOSICAO(cTecnico, dData, cHoraIni, cHoraFim)
+    Local aConflitos := {}
+    Local oConflito  := Nil
+    Local cAlias     := GetNextAlias()
+
+    BeginSql Alias cAlias
+        SELECT SZ6.Z6_HMINI, SZ6.Z6_HMFIM
+        FROM %Table:SZ6% SZ6
+        WHERE SZ6.Z6_FILIAL  = %xFilial:SZ6%
+          AND SZ6.Z6_TECNICO = %Exp:cTecnico%
+          AND SZ6.Z6_DTAGE   = %Exp:dData%
+          AND SZ6.Z6_HMINI   < %Exp:cHoraFim%
+          AND SZ6.Z6_HMFIM   > %Exp:cHoraIni%
+          AND %NotDel%
+    EndSql
+
+    While !(cAlias)->(Eof())
+        oConflito := JsonObject():New()
+        oConflito['horaInicio'] := AllTrim((cAlias)->Z6_HMINI)
+        oConflito['horaFim']    := AllTrim((cAlias)->Z6_HMFIM)
+        AAdd(aConflitos, oConflito)
+        (cAlias)->(DbSkip())
+    EndDo
+    (cAlias)->(DbCloseArea())
+
+Return aConflitos
+
+////////////////////////////////////////////////////////////////////////////////
+// Logica real do Agendar - fora do WSMETHOD, devolve {nStatusHttp, cCorpoJson}.
+// Ver bloco de comentarios acima (WSRESTFUL CNSACHAMADOSAGENDAR) pra lista
+// completa de assuncoes de nome de campo, e o spec em
+// docs/superpowers/specs/2026-07-30-agendamento-sequence-race-fix-design.md
+// pro design completo (lock por tecnico, sobreposicao, retry, resposta
+// parcial).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_AGENDAR(cIdCh, cDataIni, cDataFim, cCodTecnico, cHoraIni, cHoraFim, cCodCliente, ;
+    cLojaCliente, cDescricao, cConfirmacao, cTurno, cAgInterna, cAgCobravel, cTipoAgenda, cProjeto, ;
+    cRevisao, cTarefa, cTipoHora, cCodAgendador)
+    Local nCham       := 0
+    Local dDataIni    := CToD("")
+    Local dDataFim    := CToD("")
+    Local dAtual      := CToD("")
+    Local cDataIso    := ""
+    Local nCriados    := 0
+    Local nTotalDias  := 0
+    Local cSeq        := ""
+    Local oJson       := JsonObject():New()
+    Local oErro       := Nil
+    Local oErroLoop   := Nil
+    Local oErroDia    := Nil
+    Local cLockKey    := ""
+    Local lLockOk     := .F.
+    Local aFalhas     := {}
+    Local oFalha      := Nil
+    Local aConflitos  := {}
+    Local nTentativa  := 0
+    Local lGravouDia  := .F.
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        If Empty(cDataIni)
+            Return {400, '{"erro":"Informe a data do agendamento."}'}
+        EndIf
+
+        Default cDataFim := cDataIni
+
+        If Empty(cCodTecnico)
+            Return {400, '{"erro":"Informe o tecnico."}'}
+        EndIf
+
+        If Empty(cHoraIni) .Or. Empty(cHoraFim)
+            Return {400, '{"erro":"Informe o horario de inicio e termino."}'}
+        EndIf
+
+        If Empty(cCodCliente)
+            Return {400, '{"erro":"Informe o cliente."}'}
+        EndIf
+
+        Default cLojaCliente := "01"
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        nCham := Val(cIdCh)
+
+        dDataIni := STOD(StrTran(cDataIni, "-", ""))
+        dDataFim := STOD(StrTran(cDataFim, "-", ""))
+
+        If Empty(dDataIni) .Or. Empty(dDataFim)
+            Return {400, '{"erro":"Data invalida."}'}
+        EndIf
+
+        If dDataFim < dDataIni
+            Return {400, '{"erro":"A data final nao pode ser anterior a data inicial."}'}
+        EndIf
+
+        // Trava de seguranca (nao e regra de negocio) - sem isso, um intervalo
+        // gigante (typo de data) faz o loop abaixo criar um registro de agenda
+        // por dia indefinidamente, estourando o timeout do REST antes de
+        // terminar (500 generico sem log - nao e excecao capturavel, e timeout).
+        // 730 dias (2 anos) e bem folgado pro uso normal.
+        If (dDataFim - dDataIni) > 730
+            Return {400, '{"erro":"Intervalo maximo de 2 anos (730 dias) por agendamento."}'}
+        EndIf
+
+        If Empty(cCodAgendador)
+            cCodAgendador := AllTrim(Posicione("AA1", 4, xFilial("AA1") + __cUserId, "AA1_NOMTEC"))
+        EndIf
+
+        nTotalDias := (dDataFim - dDataIni) + 1
+
+        // LOCK por tecnico - serializa tanto a geracao de Z6_SEQ (evita chave
+        // duplicada sob concorrencia, ver spec) quanto a checagem de
+        // sobreposicao logo abaixo (evita duas requisicoes paralelas pro
+        // mesmo tecnico nao se enxergarem e ambas gravarem horario batido).
+        // ASSUNCAO A VALIDAR: assinatura de LockByName/UnLockByName pode
+        // variar por build do TOTVS - testar em homologacao antes de producao.
+        cLockKey := "CNSA_AGENDA_" + cCodTecnico
+        lLockOk  := LockByName(cLockKey, .F., .T., 10)
+        If !lLockOk
+            ConOut("CNSA_AGENDAR: nao obteve lock para tecnico " + cCodTecnico + " em 10s - outra requisicao em andamento.")
+            Return {423, '{"erro":"Outro agendamento para este tecnico esta em andamento. Tente novamente."}'}
+        EndIf
+
+        // Begin/Recover interno so pra garantir que o UnLockByName la embaixo
+        // roda mesmo se algo inesperado escapar do tratamento por dia.
+        Begin Sequence
+
+            dAtual := dDataIni
+            While dAtual <= dDataFim
+                cDataIso := SubStr(DTOS(dAtual), 1, 4) + "-" + SubStr(DTOS(dAtual), 5, 2) + "-" + SubStr(DTOS(dAtual), 7, 2)
+
+                // 1) Sobreposicao de horario - so entre agendamentos do MESMO
+                // tecnico no mesmo dia (ver CNSA_VERIFICASOBREPOSICAO acima).
+                aConflitos := CNSA_VERIFICASOBREPOSICAO(cCodTecnico, dAtual, cHoraIni, cHoraFim)
+                If Len(aConflitos) > 0
+                    oFalha := JsonObject():New()
+                    oFalha['data']      := cDataIso
+                    oFalha['erro']      := "Tecnico ja tem agendamento neste horario"
+                    oFalha['conflitos'] := aConflitos
+                    AAdd(aFalhas, oFalha)
+                    dAtual := dAtual + 1
+                    Loop
+                EndIf
+
+                // 2) Grava com retry em caso de chave duplicada (Z6_SEQ) -
+                // ate 3 tentativas, recalculando a sequencia a cada uma.
+                lGravouDia := .F.
+                oErroDia   := Nil
+                For nTentativa := 1 To 3
+                    Begin Sequence
+                        cSeq := CNSA_PROXSEQ_SZ6(cCodTecnico, dAtual)
+
+                        RecLock("SZ6", .T.)
+                            SZ6->Z6_FILIAL  := xFilial("SZ6")
+                            SZ6->Z6_CHAMADO := nCham
+                            SZ6->Z6_DTAGE   := dAtual
+                            SZ6->Z6_TECNICO := cCodTecnico
+                            SZ6->Z6_SEQ     := cSeq
+                            SZ6->Z6_HMINI   := cHoraIni
+                            SZ6->Z6_HMFIM   := cHoraFim
+                            SZ6->Z6_CLIENTE := cCodCliente
+                            SZ6->Z6_LOJA    := cLojaCliente
+                            SZ6->Z6_SERVICO := cDescricao
+                            SZ6->Z6_CONFIRM := If(Empty(cConfirmacao), "NAO", cConfirmacao)
+                            SZ6->Z6_TURNO   := Val(cTurno)
+                            SZ6->Z6_INTERNO := If(Empty(cAgInterna), "NAO", cAgInterna)
+                            SZ6->Z6_COBRAR  := If(Empty(cAgCobravel), "NAO", cAgCobravel)
+                            SZ6->Z6_TIPOAG  := cTipoAgenda
+                            SZ6->Z6_PROJET  := cProjeto
+                            SZ6->Z6_REVISA  := cRevisao
+                            SZ6->Z6_TAREFA  := cTarefa
+                            SZ6->Z6_TIPO_HR := cTipoHora
+                            SZ6->Z6_QGRAVOU := cCodAgendador
+                        SZ6->(MsUnlock())
+
+                        lGravouDia := .T.
+                    Recover Using oErroDia
+                        // Erro de chave duplicada (ou outro) - tenta de novo
+                        // no proximo loop de nTentativa, com sequencia
+                        // recalculada.
+                    End Sequence
+
+                    If lGravouDia
+                        Exit
+                    EndIf
+                Next nTentativa
+
+                If lGravouDia
+                    nCriados++
+                Else
+                    ConOut("CNSA_AGENDAR: falha ao gravar " + cDataIso + " tecnico " + cCodTecnico + " apos 3 tentativas: " + If(oErroDia != Nil, oErroDia:Description, "erro desconhecido"))
+                    oFalha := JsonObject():New()
+                    oFalha['data'] := cDataIso
+                    oFalha['erro'] := "Falha ao gravar apos 3 tentativas: " + If(oErroDia != Nil, oErroDia:Description, "erro desconhecido")
+                    AAdd(aFalhas, oFalha)
+                EndIf
+
+                dAtual := dAtual + 1
+            EndDo
+
+        Recover Using oErroLoop
+            // Erro inesperado fora do tratamento por dia - ainda assim libera
+            // o lock abaixo antes de propagar.
+        End Sequence
+
+        UnLockByName(cLockKey, .T.)
+
+        If oErroLoop != Nil
+            Return {500, '{"erro":"' + CNSA_JSONESC(oErroLoop:Description) + '"}'}
+        EndIf
+
+        oJson['sucesso']    := nCriados > 0
+        oJson['idCh']       := cIdCh
+        oJson['quantidade'] := nCriados
+        oJson['falhas']     := aFalhas
+        oJson['mensagem']   := AllTrim(Str(nCriados)) + " de " + AllTrim(Str(nTotalDias)) + " dia(s) criado(s) com sucesso."
+
+        Return {If(nCriados > 0, 200, 500), oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// VER AGENDA - WSRESTFUL proprio (CNSACHAMADOSVERAGENDA), so leitura (GET).
+// Botao "Ver Agenda" do front: lista os agendamentos (SZ6) ja criados pro
+// chamado (podem ser varios, um por dia, se o Agendar foi feito com
+// intervalo de datas) - mostra Data, Cliente, Horario, Tecnico e Descricao
+// de cada um, conforme pedido.
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSVERAGENDA DESCRIPTION "Lista os agendamentos (SZ6) vinculados a um chamado" FORMAT APPLICATION_JSON
+
+    WSDATA idCh AS CHARACTER OPTIONAL
+
+    WSMETHOD GET DESCRIPTION "Lista os agendamentos de um chamado (idCh), ordenados por data/hora"
+
+END WSRESTFUL
+
+WSMETHOD GET WSRECEIVE idCh WSSERVICE CNSACHAMADOSVERAGENDA
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    aResultado := CNSA_VERAGENDA(AllTrim(::idCh))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Logica real do Ver Agenda - fora do WSMETHOD, devolve {nStatusHttp, cCorpoJson}.
+// Mesma logica defensiva de Z6_DTAGE (Character AAAAMMDD ou Date) ja usada em
+// CNSA_EXCLUIR, pra nao presumir o tipo do campo.
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_VERAGENDA(cIdCh)
+    Local nCham    := 0
+    Local cAlias   := ""
+    Local oJson    := JsonObject():New()
+    Local aItens   := {}
+    Local oLinha   := Nil
+    Local cDataIso := ""
+    Local cCodCli  := ""
+    Local cLoja    := ""
+    Local oErro    := Nil
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        nCham  := Val(cIdCh)
+        cAlias := GetNextAlias()
+
+        BeginSql Alias cAlias
+            SELECT Z6_DTAGE, Z6_HMINI, Z6_HMFIM, Z6_TECNICO, Z6_CLIENTE, Z6_LOJA, Z6_SERVICO
+            FROM %Table:SZ6% SZ6
+            WHERE Z6_FILIAL  = %xFilial:SZ6%
+              AND Z6_CHAMADO = %Exp:nCham%
+              AND %NotDel%
+            ORDER BY Z6_DTAGE, Z6_HMINI
+        EndSql
+
+        While !(cAlias)->(Eof())
+
+            If ValType((cAlias)->Z6_DTAGE) == "D"
+                cDataIso := DToS((cAlias)->Z6_DTAGE)
+            Else
+                cDataIso := AllTrim((cAlias)->Z6_DTAGE)
+            EndIf
+            If Len(cDataIso) == 8
+                cDataIso := SubStr(cDataIso, 1, 4) + "-" + SubStr(cDataIso, 5, 2) + "-" + SubStr(cDataIso, 7, 2)
+            EndIf
+
+            cCodCli := AllTrim((cAlias)->Z6_CLIENTE)
+            cLoja   := AllTrim((cAlias)->Z6_LOJA)
+
+            // FIX (acentos virando caractere de substituicao) - EncodeUtf8
+            // no texto livre/nomes antes do JSON, mesmo padrao da listagem.
+            oLinha := JsonObject():New()
+            oLinha['data']        := cDataIso
+            oLinha['horaInicio']  := AllTrim((cAlias)->Z6_HMINI)
+            oLinha['horaFim']     := AllTrim((cAlias)->Z6_HMFIM)
+            oLinha['tecnico']     := EncodeUtf8(AllTrim(Posicione("AA1", 1, xFilial("AA1") + AllTrim((cAlias)->Z6_TECNICO), "AA1_NOMTEC")))
+            oLinha['cliente']     := EncodeUtf8(AllTrim(Posicione("SA1", 1, xFilial("SA1") + cCodCli + cLoja, "A1_NOME")))
+            oLinha['descricao']   := EncodeUtf8(AllTrim((cAlias)->Z6_SERVICO))
+            AAdd(aItens, oLinha)
+
+            (cAlias)->(DbSkip())
+        EndDo
+        (cAlias)->(DbCloseArea())
+
+        oJson['idCh']  := cIdCh
+        oJson['items'] := aItens
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ANOTACOES - dois WSRESTFUL proprios (leitura e gravacao separadas, mesmo
+// motivo documentado no ComponentesRest.prw pra nao colocar 2 WSMETHOD no
+// mesmo WSRESTFUL). Campo unico na ZA1 - cada gravacao SOBRESCREVE o
+// conteudo anterior, nao ha historico de multiplas anotacoes.
+//
+// CONFIRMADO (Henrique): campo ZA1_ANOT criado no SX3, Character(200) - NAO
+// e memo. 200 caracteres e pouco pra HTML do po-rich-text (uma unica tag ja
+// consome parte disso). Assign direto num campo Character maior que o
+// tamanho trunca silencioso no AdvPL, sem erro - por isso o tamanho e
+// validado explicitamente em CNSA_ANOTACAO_SALVAR antes de gravar, pra nao
+// salvar HTML cortado no meio de uma tag.
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSANOTACAO DESCRIPTION "Le a anotacao (campo memo) de um chamado (ZA1)" FORMAT APPLICATION_JSON
+
+    WSDATA idCh AS CHARACTER OPTIONAL
+
+    WSMETHOD GET DESCRIPTION "Devolve a anotacao atual de um chamado (idCh)"
+
+END WSRESTFUL
+
+WSMETHOD GET WSRECEIVE idCh WSSERVICE CNSACHAMADOSANOTACAO
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    aResultado := CNSA_ANOT_LER(AllTrim(::idCh))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+Static Function CNSA_ANOT_LER(cIdCh)
+    Local oJson := JsonObject():New()
+    Local oErro := Nil
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        // FIX (acentos virando caractere de substituicao no front): EncodeUtf8
+        // antes de devolver no JSON - o WSRESTFUL classico nao converte
+        // ANSI/CP1252 (interno do ADVPL) pra UTF-8 sozinho.
+        oJson['idCh']     := cIdCh
+        oJson['anotacao'] := If(ZA1->(FieldPos("ZA1_ANOT")) > 0, EncodeUtf8(AllTrim(ZA1->ZA1_ANOT)), "")
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+WSRESTFUL CNSACHAMADOSANOTACAOSALVAR DESCRIPTION "Grava a anotacao (campo memo) de um chamado (ZA1)" FORMAT APPLICATION_JSON
+
+    WSDATA idCh     AS CHARACTER OPTIONAL
+    WSDATA anotacao AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Sobrescreve a anotacao de um chamado (idCh) com o conteudo do po-rich-text"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE idCh, anotacao WSSERVICE CNSACHAMADOSANOTACAOSALVAR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    aResultado := CNSA_ANOTACAO_SALVAR(AllTrim(::idCh), ::anotacao)
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Grava a anotacao. NAO usa AllTrim no conteudo (::anotacao e recebido sem
+// trim no WSMETHOD acima de proposito) - o po-rich-text manda HTML, e trim
+// nas pontas de uma string HTML e inofensivo mas desnecessario; o parametro
+// e mantido intacto pra nao arriscar cortar uma tag.
+//
+// FIX (acentos virando caractere de substituicao): DecodeUTF8 no conteudo
+// inteiro (HTML e texto juntos) - tags sao ASCII puro, DecodeUTF8 nao mexe
+// nelas, so converte os bytes UTF-8 de acento pro ANSI/CP1252 interno do
+// ADVPL. Feito ANTES do TamSX3 porque o limite de tamanho e em bytes ANSI
+// (o que realmente sera gravado), nao em bytes UTF-8 (que chegam maiores).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_ANOTACAO_SALVAR(cIdCh, cAnotacao)
+    Local oJson := JsonObject():New()
+    Local oErro := Nil
+
+    cAnotacao := DecodeUTF8(cAnotacao)
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        If ZA1->(FieldPos("ZA1_ANOT")) == 0
+            Return {500, '{"erro":"Campo ZA1_ANOT nao existe no dicionario - confirme o nome real do campo memo de anotacao."}'}
+        EndIf
+
+        If Len(cAnotacao) > TamSX3("ZA1_ANOT")[1]
+            Return {400, '{"erro":"Anotacao excede o tamanho maximo do campo (' + AllTrim(Str(TamSX3("ZA1_ANOT")[1])) + ' caracteres)."}'}
+        EndIf
+
+        RecLock("ZA1", .F.)
+            ZA1->ZA1_ANOT := cAnotacao
+        ZA1->(MsUnlock())
+
+        oJson['sucesso']  := .T.
+        oJson['idCh']     := cIdCh
+        oJson['mensagem'] := "Anotacao salva com sucesso."
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// HISTORICO DE ANOTACOES (ZA2) - dois WSRESTFUL proprios (listar e incluir),
+// mesmo motivo dos outros pares deste arquivo (nao colocar 2 WSMETHOD no
+// mesmo WSRESTFUL). Substitui o uso de ZA1_ANOT (campo unico, sobrescrito a
+// cada save, sem historico) - pedido explicito: poder escrever mais de uma
+// anotacao por chamado. Reaproveita a MESMA tabela ZA2 que o CNSA001.PRW
+// classico ja usa pra isso (grid "Anotacoes/Interacoes", CNSA_INTERAGIR) -
+// nao inventa tabela nova. ZA1_ANOT continua existindo no dicionario (dado
+// antigo nao migrado), so nao e mais usado por este par de endpoints.
+//
+// Campos reais confirmados no dicionario (Configurador, print do usuario):
+//   ZA2_IDGRID - sequencia (Character, mesmo padrao StrZero(n,3) do CNSA001)
+//   ZA2_CONSUL - codigo do consultor que escreveu (AA1_CODTEC, nao o nome -
+//                confirmado pelo uso identico em CNSA_INTERAGIR/CNSA001.PRW)
+//   ZA2_DESCRI - o texto da anotacao
+//   ZA2_DATA   - data (Date, seguindo o padrao de CNSA_INTERAGIR que grava
+//                CToD(DToC(Date())) - ASSUNCAO A VALIDAR se o tipo real for
+//                diferente, mesmo cuidado ja necessario com SZ6/Z6_DTAGE)
+//   ZA2_HORA   - hora (Character HH:MM, mesmo padrao de Z6_HMINI/Z6_HMFIM)
+//   ZA2_IDCH   - id do chamado (Numerico, mesmo padrao de Z6_CHAMADO)
+////////////////////////////////////////////////////////////////////////////////
+WSRESTFUL CNSACHAMADOSANOTACOES DESCRIPTION "Lista o historico de anotacoes (ZA2) de um chamado" FORMAT APPLICATION_JSON
+
+    WSDATA idCh AS CHARACTER OPTIONAL
+
+    WSMETHOD GET DESCRIPTION "Lista as anotacoes (ZA2) de um chamado, mais antiga primeiro"
+
+END WSRESTFUL
+
+WSMETHOD GET WSRECEIVE idCh WSSERVICE CNSACHAMADOSANOTACOES
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    // FIX (conflito de simbolo - 10 primeiros chars iguais a CNSA_ANOTACAO_
+    // SALVAR faziam o compilador confundir as duas funcoes): renomeado pra
+    // CNSA_ZA2LISTAR, prefixo CNSA_ZA2... distinto ja no 9o caractere de
+    // qualquer outra funcao deste arquivo (ver CNSA_ZA2_GRAVAR/CNSA_ZA2INCLUIR).
+    aResultado := CNSA_ZA2LISTAR(AllTrim(::idCh))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+Static Function CNSA_ZA2LISTAR(cIdCh)
+    Local oJson     := JsonObject():New()
+    Local aItens    := {}
+    Local oLinha    := Nil
+    Local cAlias    := ""
+    Local nChamN    := 0
+    Local cNomeCons := ""
+    Local cDataIso  := ""
+    Local oErro     := Nil
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        nChamN := Val(cIdCh)
+        cAlias := GetNextAlias()
+
+        BeginSql Alias cAlias
+            SELECT ZA2_IDGRID, ZA2_CONSUL, ZA2_DATA, ZA2_HORA, ZA2_DESCRI
+            FROM %Table:ZA2% ZA2
+            WHERE ZA2_FILIAL = %xFilial:ZA2%
+              AND ZA2_IDCH   = %Exp:nChamN%
+              AND %NotDel%
+            ORDER BY ZA2_IDGRID
+        EndSql
+
+        While !(cAlias)->(Eof())
+            // Mesma defesa ja usada com Z6_DTAGE (SZ6) - Date ou Character
+            // dependendo do driver/query, nunca assume um so.
+            If ValType((cAlias)->ZA2_DATA) == "D"
+                cDataIso := DToS((cAlias)->ZA2_DATA)
+            Else
+                cDataIso := AllTrim((cAlias)->ZA2_DATA)
+            EndIf
+            If Len(cDataIso) == 8
+                cDataIso := SubStr(cDataIso, 1, 4) + "-" + SubStr(cDataIso, 5, 2) + "-" + SubStr(cDataIso, 7, 2)
+            EndIf
+
+            cNomeCons := AllTrim(Posicione("AA1", 1, xFilial("AA1") + AllTrim((cAlias)->ZA2_CONSUL), "AA1_NOMTEC"))
+
+            oLinha := JsonObject():New()
+            oLinha['seq']       := AllTrim((cAlias)->ZA2_IDGRID)
+            oLinha['consultor'] := EncodeUtf8(cNomeCons)
+            oLinha['data']      := cDataIso
+            oLinha['hora']      := AllTrim((cAlias)->ZA2_HORA)
+            oLinha['texto']     := EncodeUtf8(AllTrim((cAlias)->ZA2_DESCRI))
+            AAdd(aItens, oLinha)
+
+            (cAlias)->(DbSkip())
+        EndDo
+        (cAlias)->(DbCloseArea())
+
+        oJson['idCh']  := cIdCh
+        oJson['items'] := aItens
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
+
+WSRESTFUL CNSACHAMADOSANOTACOESINCLUIR DESCRIPTION "Adiciona uma nova anotacao (ZA2) a um chamado, sem sobrescrever as anteriores" FORMAT APPLICATION_JSON
+
+    WSDATA idCh  AS CHARACTER OPTIONAL
+    WSDATA texto AS CHARACTER OPTIONAL
+
+    WSMETHOD POST DESCRIPTION "Adiciona uma anotacao nova ao historico do chamado (idCh)"
+
+END WSRESTFUL
+
+WSMETHOD POST WSRECEIVE idCh, texto WSSERVICE CNSACHAMADOSANOTACOESINCLUIR
+    Local aResultado := {}
+
+    ::SetContentType("application/json")
+    // CORS - NAO configurar aqui via ::SetHeader (metodo nao existe nessa
+    // classe do WSRESTFUL classico e causa erro 500 - ja tentamos e revertemos).
+    // O jeito certo e no appserver.ini, na secao [HTTPURI]/[HTTPENV] que mapeia
+    // o /rest deste servidor: adicionar CORSEnable=1 e AllowOrigin=* junto de
+    // URL=/rest, PrepareIn=..., Instances=... (e reiniciar o appserver).
+    aResultado := CNSA_ZA2INCLUIR(AllTrim(::idCh), DecodeUTF8(::texto))
+    ::SetStatus(aResultado[1])
+    ::SetResponse(aResultado[2])
+
+Return .T.
+
+////////////////////////////////////////////////////////////////////////////////
+// Grava uma linha nova na ZA2 (nunca sobrescreve) - sequencia MAX+1 por
+// chamado (mesmo calculo de GETIDGRID/CNSA_INTERAGIR no CNSA001.PRW).
+// Compartilhada entre a inclusao manual (CNSACHAMADOSANOTACOESINCLUIR
+// abaixo) e o import automatico de e-mail (CNSA_GERACHAM - o corpo do
+// e-mail vira a primeira anotacao do chamado recem-criado).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_ZA2_GRAVAR(nChamN, cConsultor, cTexto)
+    Local cAlias := GetNextAlias()
+    Local nSeq   := 1
+
+    BeginSql Alias cAlias
+        SELECT MAX(ZA2_IDGRID) MAXGRID
+        FROM %Table:ZA2% ZA2
+        WHERE ZA2_FILIAL = %xFilial:ZA2%
+          AND ZA2_IDCH   = %Exp:nChamN%
+          AND %NotDel%
+    EndSql
+    If !(cAlias)->(Eof()) .And. !Empty(AllTrim((cAlias)->MAXGRID))
+        nSeq := Val(AllTrim((cAlias)->MAXGRID)) + 1
+    EndIf
+    (cAlias)->(DbCloseArea())
+
+    RecLock("ZA2", .T.)
+        ZA2->ZA2_FILIAL := xFilial("ZA2")
+        ZA2->ZA2_IDCH   := nChamN
+        ZA2->ZA2_IDGRID := StrZero(nSeq, 3)
+        ZA2->ZA2_CONSUL := cConsultor
+        ZA2->ZA2_DATA   := Date()
+        ZA2->ZA2_HORA   := Left(Time(), 5)
+        ZA2->ZA2_DESCRI := cTexto
+    ZA2->(MsUnlock())
+
+Return StrZero(nSeq, 3)
+
+////////////////////////////////////////////////////////////////////////////////
+// Adiciona uma anotacao nova na ZA2 - NUNCA sobrescreve, sempre INSERT com
+// proxima sequencia (ver CNSA_ZA2_GRAVAR acima).
+// FIX: nome era CNSA_ANOTACOES_INCLUIR - 10 primeiros chars ("CNSA_ANOTA")
+// identicos a CNSA_ANOTACAO_SALVAR, o compilador confundia as duas.
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA_ZA2INCLUIR(cIdCh, cTexto)
+    Local oJson      := JsonObject():New()
+    Local oErro      := Nil
+    Local nChamN     := 0
+    Local cConsultor := ""
+    Local cSeq       := ""
+
+    cTexto := AllTrim(cTexto)
+
+    Begin Sequence
+
+        If Empty(cIdCh)
+            Return {400, '{"erro":"Informe o idCh do chamado (?idCh=000031)."}'}
+        EndIf
+
+        If Empty(cTexto)
+            Return {400, '{"erro":"Informe o texto da anotacao."}'}
+        EndIf
+
+        dbSelectArea("ZA1")
+        ZA1->(DbSetOrder(1))
+        If !ZA1->(DbSeek(xFilial("ZA1") + cIdCh))
+            Return {404, '{"erro":"Chamado nao encontrado."}'}
+        EndIf
+
+        If Len(cTexto) > TamSX3("ZA2_DESCRI")[1]
+            Return {400, '{"erro":"Anotacao excede o tamanho maximo do campo (' + AllTrim(Str(TamSX3("ZA2_DESCRI")[1])) + ' caracteres)."}'}
+        EndIf
+
+        nChamN     := Val(cIdCh)
+        cConsultor := Posicione("AA1", 4, xFilial("AA1") + __cUserId, "AA1_CODTEC")
+        cSeq       := CNSA_ZA2_GRAVAR(nChamN, cConsultor, cTexto)
+
+        oJson['sucesso']  := .T.
+        oJson['idCh']     := cIdCh
+        oJson['seq']      := cSeq
+        oJson['mensagem'] := "Anotacao adicionada com sucesso."
+
+        Return {200, oJson:ToJson()}
+
+    Recover Using oErro
+        Return {500, '{"erro":"' + CNSA_JSONESC(oErro:Description) + '"}'}
+    End Sequence
+
+Return {500, '{"erro":"Erro desconhecido."}'}
+
