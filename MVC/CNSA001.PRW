@@ -1066,7 +1066,7 @@ Return cRet
 Static Function CNSA_TOKEN()
     Local cTenant := "148b1301-21e9-4477-9897-64d9cf905086"
     Local cClient := "b0b341b5-009f-474a-834a-8839b0c984cd"
-    Local cSecret := "24k8Q~OkYmFDz1BLUN5xk5MjBc.uYKh9CVZyccLY"
+    Local cSecret := "secret id aqui"
     Local oRest, oJson, cBody, cToken := ""
 
     cBody := "grant_type=client_credentials"
