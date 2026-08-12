@@ -2,34 +2,6 @@
   display: block;
 }
 
-/* .os-lista-cronometro fica ANTES do po-page-dynamic-table como sibling -
-   sem isso nao herda o margin-left/width que o PO UI aplica em .po-page,
-   entao "flutua" por cima do menu lateral. .po-wrapper e .po-collapsed-menu
-   ficam no app host (fora deste componente), entao um descendant combinator
-   comum nunca bate (Angular anexa o atributo [_ngcontent-xxx] a TODOS os
-   seletores da regra, inclusive .po-wrapper). :host-context() e o jeito
-   correto de checar uma classe em ancestral fora do componente com
-   ViewEncapsulation.Emulated - e continua funcionando quando este componente
-   e carregado remoto via module federation (o CSS global do remoto nao e
-   injetado no host nesse cenario, so o CSS scoped do componente, que o
-   Angular injeta junto com o JS). */
-:host-context(.po-wrapper) .os-lista-cronometro {
-  margin-left: var(--menu-width);
-  width: calc(100% - var(--menu-width));
-  box-sizing: border-box;
-}
-
-:host-context(.po-wrapper.po-collapsed-menu) .os-lista-cronometro {
-  margin-left: var(--collapsed-menu-width);
-  width: calc(100% - var(--collapsed-menu-width));
-}
-
-.os-lista-cronometro {
-  margin-bottom: 12px;
-  color: #666;
-  font-size: 0.85rem;
-}
-
 /* --- Card de detalhe usado dentro do po-modal (ação "detail") --- */
 
 .card-item {

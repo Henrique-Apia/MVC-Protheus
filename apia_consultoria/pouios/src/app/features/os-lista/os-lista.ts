@@ -19,7 +19,6 @@ import { AlterarOsResposta, IncluirOsResposta, NovaOs, Os } from '../../core/mod
 import { OsService, PROTHEUS_REST_BASE } from '../../core/services/os.service';
 import { ComponenteItem, TipoLupa } from '../../core/models/componente.model';
 import { LupaModalComponent } from '../../shared/lupa-modal';
-import { BuscaCronometroService } from '../../core/services/busca-cronometro.service';
 
 // Mesma legenda de status do CNSA002 (AddLegend), derivada no backend a
 // partir de Z1_APROVAD/Z1_FATURAR.
@@ -43,7 +42,6 @@ type ModoFormulario = 'incluir' | 'editar';
 export class OsListaComponent {
   private readonly poNotificationService = inject(PoNotificationService);
   private readonly osService = inject(OsService);
-  protected readonly cronometro = inject(BuscaCronometroService);
 
   @ViewChild('modalDetalhe', { static: true }) protected modalDetalhe!: PoModalComponent;
   @ViewChild('modalExcluir', { static: true }) protected modalExcluir!: PoModalComponent;
@@ -115,10 +113,6 @@ export class OsListaComponent {
 
   protected readonly campos: Array<PoPageDynamicTableFilters> = [
     { property: 'os', label: 'Número OS', key: true, filter: true, gridColumns: 2 },
-    { property: 'dataOs', label: 'Data OS', type: 'date', format: 'dd/MM/yyyy', filter: true, gridColumns: 2 },
-    { property: 'nomeCliente', label: 'Cliente', gridColumns: 4 },
-    { property: 'descricao', label: 'Descrição', filter: true, gridColumns: 6 },
-    { property: 'nomeAnalista', label: 'Analista', gridColumns: 4, visible: false, allowColumnsManager: true },
     {
       property: 'status',
       label: 'Status',
@@ -140,6 +134,13 @@ export class OsListaComponent {
         { value: 'negada', label: 'Negada', color: 'color-07' }
       ]
     },
+    // gridColumns:3 (nao 2) - mesma largura do campo "Dt Abertura" (mesmo
+    // tipo 'date') em chamados-lista.ts; com 2 o calendario ficava
+    // "comendo" a caixa (estreita demais pro popup do po-datepicker).
+    { property: 'dataOs', label: 'Data OS', type: 'date', format: 'dd/MM/yyyy', filter: true, gridColumns: 3 },
+    { property: 'nomeCliente', label: 'Cliente', gridColumns: 4 },
+    { property: 'descricao', label: 'Descrição', filter: true, gridColumns: 6 },
+    { property: 'nomeAnalista', label: 'Analista', gridColumns: 4, visible: false, allowColumnsManager: true },
     // Filtro por código do cliente (SA1) - digite o código, não o nome (o
     // WSRESTFUL CNSAOS filtra por Z1_CLI exato). Mesma limitação conhecida
     // do campo "cliente" em pouichamados.

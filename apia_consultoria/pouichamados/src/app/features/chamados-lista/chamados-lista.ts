@@ -31,7 +31,6 @@ import { ChamadoService, PROTHEUS_REST_BASE } from '../../core/services/chamado.
 import { ComponenteItem, TipoLupa } from '../../core/models/componente.model';
 import { AnotacaoEditorComponent } from '../../shared/anotacao-editor';
 import { LupaModalComponent } from '../../shared/lupa-modal';
-import { BuscaCronometroService } from '../../core/services/busca-cronometro.service';
 
 // Mesma legenda de status do CNSA001 (AddLegend), usada no modal de detalhe
 // e no combo (desabilitado) da tela de Incluir/Editar.
@@ -73,7 +72,6 @@ type ModoFormulario = 'incluir' | 'editar';
 export class ChamadosListaComponent {
   private readonly poNotificationService = inject(PoNotificationService);
   private readonly chamadoService = inject(ChamadoService);
-  protected readonly cronometro = inject(BuscaCronometroService);
 
   protected readonly tipoOptions = TIPO_OPTIONS;
 
