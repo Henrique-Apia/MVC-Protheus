@@ -1,8 +1,3 @@
-<div class="os-lista-periodo">
-  <po-datepicker-range p-label="Período (Data OS)" [(ngModel)]="periodo" name="periodo"></po-datepicker-range>
-  <po-button p-label="Buscar" p-icon="an an-magnifying-glass" [p-loading]="cronometro.buscando()" (p-click)="buscar()"></po-button>
-</div>
-
 @if (cronometro.buscando()) {
   <p class="os-lista-cronometro">Buscando... {{ cronometro.segundos() }}s</p>
 }

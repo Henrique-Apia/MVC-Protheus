@@ -3,7 +3,6 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import {
   PoButtonModule,
-  PoDatepickerRange,
   PoFieldModule,
   PoModalComponent,
   PoModalModule,
@@ -54,18 +53,6 @@ export class OsListaComponent {
   @ViewChild('tabelaOs', { static: true }) protected tabelaOs!: PoPageDynamicTableComponent;
 
   protected readonly osDetalhe = signal<Os | null>(null);
-
-  // Pedido: sem data pre-selecionada - fica em branco, usuario escolhe o
-  // periodo e clica "Buscar" (nada carrega antes disso).
-  protected periodo: PoDatepickerRange = { start: '', end: '' };
-
-  /** Botão "Buscar" (igual tela de Agenda) - aplica o período marcado no seletor. */
-  protected buscar(): void {
-    if (!this.periodo.start) {
-      return;
-    }
-    this.tabelaOs.updateDataTable({ dataIni: this.periodo.start, dataFim: this.periodo.end || this.periodo.start });
-  }
 
   // --- Excluir / Copiar (botão de página, selectable, sempre visível) -------
   protected osExcluir = '';

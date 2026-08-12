@@ -56,12 +56,17 @@ WSRESTFUL CNSAOS DESCRIPTION "Listagem de Ordens de Servico (SZ1) para o portal 
     // sobre ano/mes: se vier dataIni+dataFim, ano/mes sao ignorados.
     WSDATA dataIni  AS CHARACTER OPTIONAL
     WSDATA dataFim  AS CHARACTER OPTIONAL
+    // Campo "Data OS" da Busca Avancada do po-page-dynamic-table (campo
+    // "dataOs", type:'date' - mesmo padrao do "Dt Abertura" de
+    // CNSACHAMADOS). Data exata (formato "AAAA-MM-DD") - maior prioridade
+    // de todas, sobrepoe dataIni/dataFim/ano/mes quando informado.
+    WSDATA dataOs   AS CHARACTER OPTIONAL
 
-    WSMETHOD GET DESCRIPTION "Lista OS - visualizar por numero, pesquisa livre por texto na descricao, filtro por cliente/analista, periodo (dataIni/dataFim), ano ou ano+mes"
+    WSMETHOD GET DESCRIPTION "Lista OS - visualizar por numero, pesquisa livre por texto na descricao, filtro por cliente/analista, data exata (dataOs), periodo (dataIni/dataFim), ano ou ano+mes"
 
 END WSRESTFUL
 
-WSMETHOD GET WSRECEIVE pagina, tamanho, os, texto, cliente, analista, ano, mes, dataIni, dataFim WSSERVICE CNSAOS
+WSMETHOD GET WSRECEIVE pagina, tamanho, os, texto, cliente, analista, ano, mes, dataIni, dataFim, dataOs WSSERVICE CNSAOS
     Local oJson         := JsonObject():New()
     Local aRetorno      := {}
     Local oLinha        := Nil
@@ -76,6 +81,7 @@ WSMETHOD GET WSRECEIVE pagina, tamanho, os, texto, cliente, analista, ano, mes, 
     Local nMesParam      := 0
     Local cDataIniParam  := ""
     Local cDataFimParam  := ""
+    Local cDataOsParam   := ""
     Local cOsParam       := ""
     Local cTextoParam    := ""
     Local cTextoLike     := ""
@@ -100,6 +106,7 @@ WSMETHOD GET WSRECEIVE pagina, tamanho, os, texto, cliente, analista, ano, mes, 
         Default ::mes      := 0
         Default ::dataIni  := ""
         Default ::dataFim  := ""
+        Default ::dataOs   := ""
 
         nPagina      := If(::pagina  < 1, 1, ::pagina)
         nTamanho     := If(::tamanho < 1 .Or. ::tamanho > 100, 10, ::tamanho)
@@ -116,6 +123,7 @@ WSMETHOD GET WSRECEIVE pagina, tamanho, os, texto, cliente, analista, ano, mes, 
         nMesParam      := ::mes
         cDataIniParam  := AllTrim(::dataIni)
         cDataFimParam  := AllTrim(::dataFim)
+        cDataOsParam   := AllTrim(::dataOs)
 
         // FIX (lista trazendo TUDO desde 2004, confirmado em producao - SZ1
         // e tabela historica grande): sem numero de OS especifico, so traz
@@ -124,9 +132,12 @@ WSMETHOD GET WSRECEIVE pagina, tamanho, os, texto, cliente, analista, ano, mes, 
         // (?os=) ignora a janela e acha mesmo uma OS antiga. Informando "ano"
         // (combo no front), filtra so aquele ano especifico.
         //
-        // Prioridade: dataIni+dataFim (range livre do botao "Buscar", igual
-        // padrao da tela de agenda) > ano+mes > ano > janela padrao.
-        If !Empty(cDataIniParam) .And. !Empty(cDataFimParam)
+        // Prioridade: dataOs (campo "Data OS" da Busca Avancada, data exata)
+        // > dataIni+dataFim (range livre) > ano+mes > ano > janela padrao.
+        If !Empty(cDataOsParam)
+            dDataIni := StoD(StrTran(cDataOsParam, "-", ""))
+            dDataFim := dDataIni
+        ElseIf !Empty(cDataIniParam) .And. !Empty(cDataFimParam)
             dDataIni := StoD(StrTran(cDataIniParam, "-", ""))
             dDataFim := StoD(StrTran(cDataFimParam, "-", ""))
         ElseIf nAnoParam > 0 .And. nMesParam >= 1 .And. nMesParam <= 12
