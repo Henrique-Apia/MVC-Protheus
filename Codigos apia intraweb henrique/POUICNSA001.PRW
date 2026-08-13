@@ -12,11 +12,6 @@
 // separados, cada um com seu unico WSMETHOD - mas no MESMO arquivo.
 ////////////////////////////////////////////////////////////////////////////////
 
-PUBLISH MODEL REST NAME chamados
-
-#define CNSA_FWMODEL_HOST     "https://10.0.0.3:8624"
-#define CNSA_FWMODEL_ZA1_PATH "/rest/FwModel/chamados/"
-#define CNSA_FWMODEL_ZA1_ID   "ModelZA1_Main"
 
 ////////////////////////////////////////////////////////////////////////////////
 Static Function ModelDef()
