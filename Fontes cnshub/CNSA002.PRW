@@ -342,3 +342,138 @@ User Function CNSA002_INCLUIR_OS() As Logical
     EndTry
 
 Return oRest:setStatusResponse(201, CNSA002_RESPOK(cOs, "OS incluida com sucesso."))
+
+////////////////////////////////////////////////////////////////////////////////
+// PUT /cnsaos/:os - Altera uma OS (SZ1) existente via FWModel("CNSA002").
+// Alteracao PARCIAL - so grava o campo que vier no body (presenca detectada
+// por jBody[campo] <> Nil, nao por Empty() - permite mandar 0 de verdade em
+// campo numerico, diferente do POUICNSA002.PRW atual que usa Empty()).
+////////////////////////////////////////////////////////////////////////////////
+@Put("/cnsaos/:os")
+User Function CNSA002_ALTERAR_OS() As Logical
+    Local jParams := oRest:getPathParamsRequest() As Json
+    Local cOs     := AllTrim(jParams["os"]) As Character
+    Local cBody   := oRest:getBodyRequest() As Character
+    Local jBody   := JsonObject():New() As Json
+    Local oModel  := Nil
+    Local cErro   := ""
+
+    oRest:setKeyHeaderResponse("Content-Type", "application/json")
+
+    If jBody:fromJson(cBody) <> Nil
+        Return oRest:setStatusResponse(400, CNSA002_RESPERRO("Body JSON invalido."))
+    EndIf
+
+    DbSelectArea("SZ1")
+    SZ1->(DbSetOrder(1))
+    If !SZ1->(DbSeek(xFilial("SZ1") + cOs))
+        Return oRest:setStatusResponse(404, CNSA002_RESPERRO("OS nao encontrada."))
+    EndIf
+
+    Try
+        oModel := FWLoadModel("CNSA002")
+        oModel:SetOperation(MODEL_OPERATION_UPDATE)
+        oModel:Activate()
+
+        If jBody["codCliente"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_CLI", jBody:GetJsonText("codCliente"))
+        EndIf
+        If jBody["lojaCliente"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_LOJA", jBody:GetJsonText("lojaCliente"))
+        EndIf
+        If jBody["usuario"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_USR", jBody:GetJsonText("usuario"))
+        EndIf
+        If jBody["modulo"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_MODULO", jBody:GetJsonText("modulo"))
+        EndIf
+        If jBody["motivo"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_MOTIV", jBody:GetJsonText("motivo"))
+        EndIf
+        If jBody["descricao"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_SERV", DecodeUTF8(jBody:GetJsonText("descricao")))
+        EndIf
+        If jBody["codServico"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_TIPO", jBody:GetJsonText("codServico"))
+        EndIf
+        If jBody["dataOs"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_DTOS", CNSA002_ISODATA(jBody:GetJsonText("dataOs")))
+        EndIf
+        If jBody["horaInicialDec"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_INI", CNSA002_JSONNUM(jBody, "horaInicialDec"))
+        EndIf
+        If jBody["horaFinalDec"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_FIM", CNSA002_JSONNUM(jBody, "horaFinalDec"))
+        EndIf
+        If jBody["horasTranDec"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_TRANS", CNSA002_JSONNUM(jBody, "horasTranDec"))
+        EndIf
+        If jBody["horasTiDec"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_TOTAL", CNSA002_JSONNUM(jBody, "horasTiDec"))
+        EndIf
+        If jBody["codAnalista"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_TEC", jBody:GetJsonText("codAnalista"))
+        EndIf
+        If jBody["osInterna"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_INTERNO", jBody:GetJsonText("osInterna"))
+        EndIf
+        If jBody["prevPmt"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_PREVIST", jBody:GetJsonText("prevPmt"))
+        EndIf
+        If jBody["numProposta"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_NUMPRO", jBody:GetJsonText("numProposta"))
+        EndIf
+        If jBody["pedVenda"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_PV", jBody:GetJsonText("pedVenda"))
+        EndIf
+        If jBody["hrAlmoco"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_ALMOCO", CNSA002_JSONNUM(jBody, "hrAlmoco"))
+        EndIf
+        If jBody["projeto"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_PROJET", jBody:GetJsonText("projeto"))
+        EndIf
+        If jBody["revisao"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_REVISA", jBody:GetJsonText("revisao"))
+        EndIf
+        If jBody["tarefa"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_TAREFA", jBody:GetJsonText("tarefa"))
+        EndIf
+        If jBody["chamadoHpsd"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_CHPSD", jBody:GetJsonText("chamadoHpsd"))
+        EndIf
+        If jBody["chamado"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_CHHDK", CNSA002_JSONNUM(jBody, "chamado"))
+        EndIf
+        If jBody["osDesenv"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_OSDESE", jBody:GetJsonText("osDesenv"))
+        EndIf
+        If jBody["linhaPv"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_LIN", jBody:GetJsonText("linhaPv"))
+        EndIf
+        If jBody["valorHora"] <> Nil
+            oModel:SetValue("SZ1MASTER", "Z1_VLRHR", CNSA002_JSONNUM(jBody, "valorHora"))
+        EndIf
+
+        If !oModel:VldData()
+            cErro := CNSA002_ERROMODEL(oModel)
+            oModel:DeActivate()
+            Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErro))
+        EndIf
+
+        If !oModel:CommitData()
+            cErro := CNSA002_ERROMODEL(oModel)
+            oModel:DeActivate()
+            Return oRest:setStatusResponse(500, CNSA002_RESPERRO(cErro))
+        EndIf
+
+        oModel:DeActivate()
+
+    Catch oErro
+        If oModel <> Nil
+            oModel:DeActivate()
+        EndIf
+        FWLogMsg("ERROR", , "REST", "CNSA002_ALTERAR_OS", , "01", oErro:Description, 0, 0, {})
+        Return oRest:setStatusResponse(500, CNSA002_RESPERRO(oErro:Description))
+    EndTry
+
+Return oRest:setStatusResponse(200, CNSA002_RESPOK(cOs, "OS alterada com sucesso."))
