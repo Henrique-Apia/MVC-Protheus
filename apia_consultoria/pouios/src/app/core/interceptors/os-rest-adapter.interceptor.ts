@@ -29,7 +29,7 @@ export class OsRestAdapterInterceptor implements HttpInterceptor {
   // tamanho de página - manda sempre pageSize=10, fixo, por baixo dos panos.
   // Sobrescrevemos aqui antes de virar `tamanho` pro ADVPL (que aceita até
   // 100, mesmo padrão de pouichamados/POUICNSA001.PRW).
-  private readonly TAMANHO_PAGINA = 50;
+  private readonly TAMANHO_PAGINA = 25;
 
   private ehListagemOs(url: string): boolean {
     return url.split('?')[0].endsWith(this.OS_PATH);

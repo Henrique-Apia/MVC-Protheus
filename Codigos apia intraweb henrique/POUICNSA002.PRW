@@ -4,7 +4,7 @@
 #include "TOPCONN.CH"
 #include "TOTVS.CH"
 
-#define CNSA_FWMODEL_HOST     "http://10.0.0.3:3624"
+#define CNSA_FWMODEL_HOST     "https://10.0.0.3:8624"
 #define CNSA_FWMODEL_ZA1_PATH "/rest/FwModel/chamados/"
 #define CNSA_FWMODEL_ZA1_ID   "ModelZA1_Main"
 

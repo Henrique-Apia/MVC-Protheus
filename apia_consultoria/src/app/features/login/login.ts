@@ -28,6 +28,16 @@ export class LoginComponent {
 
   protected readonly carregando = signal(false);
 
+  constructor() {
+    // Sem isso, apertar "Voltar" no navegador até a tela de login (sem
+    // clicar em "Sair") não invalida a sessão - o token continua válido em
+    // sessionStorage, então apertar "Avançar" depois passa direto pelo
+    // authGuard sem pedir login de novo. Encerrando a sessão sempre que essa
+    // tela é montada (voltar, "Sair", ou acesso direto) torna o
+    // reautenticar obrigatório em todos os casos.
+    this.authService.sair();
+  }
+
   protected readonly literais: PoPageLoginLiterals = {
     loginLabel: 'Usuário',
     loginPlaceholder: 'Insira seu usuário'
