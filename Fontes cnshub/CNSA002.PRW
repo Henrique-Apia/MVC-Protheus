@@ -477,3 +477,50 @@ User Function CNSA002_ALTERAR_OS() As Logical
     EndTry
 
 Return oRest:setStatusResponse(200, CNSA002_RESPOK(cOs, "OS alterada com sucesso."))
+
+////////////////////////////////////////////////////////////////////////////////
+// DELETE /cnsaos/:os - Exclui uma OS (SZ1) via FWModel("CNSA002").
+////////////////////////////////////////////////////////////////////////////////
+@Delete("/cnsaos/:os")
+User Function CNSA002_EXCLUIR_OS() As Logical
+    Local jParams := oRest:getPathParamsRequest() As Json
+    Local cOs     := AllTrim(jParams["os"]) As Character
+    Local oModel  := Nil
+    Local cErro   := ""
+
+    oRest:setKeyHeaderResponse("Content-Type", "application/json")
+
+    DbSelectArea("SZ1")
+    SZ1->(DbSetOrder(1))
+    If !SZ1->(DbSeek(xFilial("SZ1") + cOs))
+        Return oRest:setStatusResponse(404, CNSA002_RESPERRO("OS nao encontrada."))
+    EndIf
+
+    Try
+        oModel := FWLoadModel("CNSA002")
+        oModel:SetOperation(MODEL_OPERATION_DELETE)
+        oModel:Activate()
+
+        If !oModel:VldData()
+            cErro := CNSA002_ERROMODEL(oModel)
+            oModel:DeActivate()
+            Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErro))
+        EndIf
+
+        If !oModel:CommitData()
+            cErro := CNSA002_ERROMODEL(oModel)
+            oModel:DeActivate()
+            Return oRest:setStatusResponse(500, CNSA002_RESPERRO(cErro))
+        EndIf
+
+        oModel:DeActivate()
+
+    Catch oErro
+        If oModel <> Nil
+            oModel:DeActivate()
+        EndIf
+        FWLogMsg("ERROR", , "REST", "CNSA002_EXCLUIR_OS", , "01", oErro:Description, 0, 0, {})
+        Return oRest:setStatusResponse(500, CNSA002_RESPERRO(oErro:Description))
+    EndTry
+
+Return oRest:setStatusResponse(200, CNSA002_RESPOK(cOs, "OS excluida com sucesso."))
