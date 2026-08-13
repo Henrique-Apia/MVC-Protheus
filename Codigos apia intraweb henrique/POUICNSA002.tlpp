@@ -2,7 +2,6 @@
 #include "RWMAKE.CH"
 #include "TOPCONN.CH"
 #include "TOTVS.CH"
-#include "FWMVCDEF.CH"
 #include "tlpp-core.th"
 #INCLUDE 'tlpp-rest.th'
 
@@ -11,12 +10,10 @@
 // API REST do portal PO-UI de Ordens de Servico (pouios/apia-po-cnshub) -
 // espelha POUICNSA001.prw (chamados). Migrado de WSRESTFUL/WSMETHOD pra
 // anotacoes TLPP (@Get/@Post) - mesmas URLs, mesmos verbos, mesmos parametros
-// via querystring de sempre (zero mudanca de contrato pro front). Listagem e
-// Copiar mantem a logica interna 100% igual (consulta/gravacao direta via
-// BeginSql/RecLock - nao mapeiam bem em FWModel). Incluir/Alterar/Excluir
-// passaram a usar FWModel("CNSA002") por baixo (mesmo model do CNSA002.tlpp
-// classico) em vez de RecLock direto - ganha a validacao de FSZ1PosValid do
-// ModelDef sem duplicar regra em dois lugares.
+// via querystring de sempre (zero mudanca de contrato pro front). Logica
+// interna de todos os endpoints continua 100% igual a antes (consulta/gravacao
+// direta via BeginSql/RecLock na SZ1, sem FWModel em nenhum deles) - so o
+// wrapper de rota mudou de WSRESTFUL/WSMETHOD/WSDATA pra @Get/@Post + oRest.
 //
 // Campos de negocio expostos - ver
 // docs/superpowers/specs/2026-07-31-pouios-ordens-servico-design.md pro
@@ -406,44 +403,14 @@ Static Function CNSA_OS_JSONESC(cTexto)
 Return cRet
 
 ////////////////////////////////////////////////////////////////////////////////
-// Helpers compartilhados pelos endpoints FWModel (Incluir/Alterar/Excluir).
-// Mesmo padrao ja revisado em CNSA002.tlpp - jDados pode vir de querystring
-// (oRest:getQueryRequest(), usado aqui) ou de body JSON, tanto faz pro
-// JsonObject de acesso por chave.
+// Helpers compartilhados pelos endpoints @Get/@Post.
 ////////////////////////////////////////////////////////////////////////////////
-Static Function CNSA002_ISODATA(cIso)
-    If Empty(cIso)
-        Return CToD("")
-    EndIf
-Return StoD(StrTran(cIso, "-", ""))
-
 Static Function CNSA002_JSONNUM(jDados, cCampo)
     Local xVal := jDados[cCampo]
     If xVal == Nil
         Return 0
     EndIf
 Return Val(cValToChar(xVal))
-
-Static Function CNSA002_ERROMODEL(oModel)
-    Local aErros := oModel:GetErrorMessage()
-    Local cMsg   := ""
-    Local nI     := 0
-
-    If ValType(aErros) == "A"
-        For nI := 1 To Len(aErros)
-            If ValType(aErros[nI]) == "A" .And. Len(aErros[nI]) >= 6 .And. !Empty(aErros[nI][6])
-                cMsg += aErros[nI][6] + "; "
-            EndIf
-        Next nI
-    EndIf
-
-    If Empty(cMsg)
-        cMsg := "Erro de validacao no registro."
-    ElseIf Right(cMsg, 2) == "; "
-        cMsg := Left(cMsg, Len(cMsg) - 2)
-    EndIf
-
-Return cMsg
 
 Static Function CNSA002_RESPOK(cOs, cMsg)
     Local oJson := JsonObject():New()
@@ -458,141 +425,140 @@ Static Function CNSA002_RESPERRO(cErro)
     oJson["erro"]    := EncodeUtf8(cErro)
 Return oJson:ToJson()
 
-Static Function CNSA002_CAMPOSOBRIGATORIOS()
-    Local aCampos := {}
-    AAdd(aCampos, {"codCliente",     "o cliente",           .F.})
-    AAdd(aCampos, {"lojaCliente",    "o site do cliente",   .F.})
-    AAdd(aCampos, {"usuario",        "o usuario",           .F.})
-    AAdd(aCampos, {"modulo",         "o modulo",            .F.})
-    AAdd(aCampos, {"motivo",         "o motivo",            .F.})
-    AAdd(aCampos, {"descricao",      "a descricao",         .F.})
-    AAdd(aCampos, {"codServico",     "o codigo do servico", .F.})
-    AAdd(aCampos, {"dataOs",         "a data da OS",        .F.})
-    AAdd(aCampos, {"horaInicialDec", "a hora inicial",      .T.})
-    AAdd(aCampos, {"horaFinalDec",   "a hora final",        .T.})
-    AAdd(aCampos, {"horasTiDec",     "as horas TI",         .T.})
-    AAdd(aCampos, {"codAnalista",    "o analista",          .F.})
-Return aCampos
-
-// lParcial .F. (Incluir): todo campo obrigatorio precisa estar presente e nao-vazio.
-// lParcial .T. (Alterar): so valida os campos que VIERAM - se vier vazio (nao
-// Nil) um campo obrigatorio, rejeita; se nem vier, ignora (parcial de verdade).
-Static Function CNSA002_VALIDADADOS(jDados, lParcial)
-    Local aCampos   := CNSA002_CAMPOSOBRIGATORIOS()
-    Local nI        := 0
-    Local xVal      := Nil
-    Local lPresente := .F.
-
-    For nI := 1 To Len(aCampos)
-        xVal      := jDados[aCampos[nI][1]]
-        lPresente := xVal <> Nil
-
-        If !lParcial .And. !lPresente
-            Return "Informe " + aCampos[nI][2] + "."
-        EndIf
-
-        If lPresente .And. !aCampos[nI][3] .And. Empty(AllTrim(cValToChar(xVal)))
-            Return "Informe " + aCampos[nI][2] + "."
-        EndIf
-    Next nI
-
-Return ""
-
 ////////////////////////////////////////////////////////////////////////////////
-// INCLUIR - @Post, mesma URL/querystring de sempre (POST /CNSAOSINCLUIR),
-// agora grava via FWModel("CNSA002") em vez de RecLock direto.
+// INCLUIR - @Post, mesma URL/querystring de sempre (POST /CNSAOSINCLUIR).
+// Logica interna 100% igual a antes (GetSxeNum + RecLock direto na SZ1) - sem
+// FWModel, mesma decisao do Alterar/Excluir (evita qualquer risco de tocar no
+// SZ2DETAIL, que e por cliente, nao por OS). So o wrapper de rota mudou.
 ////////////////////////////////////////////////////////////////////////////////
 @Post("/CNSAOSINCLUIR")
 User Function CNSA_OS_INCLUIR() As Logical
-    Local jQuery     := oRest:getQueryRequest() As Json
-    Local oModel     := Nil
-    Local cOs        := ""
-    Local cErro      := ""
-    Local cErroDados := "" As Character
+    Local jQuery       := oRest:getQueryRequest() As Json
+    Local cCodCliente   := AllTrim(jQuery:GetJsonText("codCliente"))
+    Local cLojaCliente  := AllTrim(jQuery:GetJsonText("lojaCliente"))
+    Local cUsuario      := AllTrim(jQuery:GetJsonText("usuario"))
+    Local cModulo       := AllTrim(jQuery:GetJsonText("modulo"))
+    Local cMotivo       := AllTrim(jQuery:GetJsonText("motivo"))
+    Local cDescricao    := DecodeUTF8(AllTrim(jQuery:GetJsonText("descricao")))
+    Local cCodServico   := AllTrim(jQuery:GetJsonText("codServico"))
+    Local cDataOs       := AllTrim(jQuery:GetJsonText("dataOs"))
+    Local cHoraIniDec   := AllTrim(jQuery:GetJsonText("horaInicialDec"))
+    Local cHoraFimDec   := AllTrim(jQuery:GetJsonText("horaFinalDec"))
+    Local cHorasTiDec   := AllTrim(jQuery:GetJsonText("horasTiDec"))
+    Local cCodAnalista  := AllTrim(jQuery:GetJsonText("codAnalista"))
+    Local cDtDigitacao  := AllTrim(jQuery:GetJsonText("dtDigitacao"))
+    Local cOsInterna    := AllTrim(jQuery:GetJsonText("osInterna"))
+    Local cHorasTranDec := AllTrim(jQuery:GetJsonText("horasTranDec"))
+    Local cPrevPmt      := AllTrim(jQuery:GetJsonText("prevPmt"))
+    Local cNumProposta  := AllTrim(jQuery:GetJsonText("numProposta"))
+    Local cPedVenda     := AllTrim(jQuery:GetJsonText("pedVenda"))
+    Local cHrAlmoco     := AllTrim(jQuery:GetJsonText("hrAlmoco"))
+    Local cProjeto      := AllTrim(jQuery:GetJsonText("projeto"))
+    Local cRevisao      := AllTrim(jQuery:GetJsonText("revisao"))
+    Local cTarefa       := AllTrim(jQuery:GetJsonText("tarefa"))
+    Local cChamadoHpsd  := AllTrim(jQuery:GetJsonText("chamadoHpsd"))
+    Local cChamado      := AllTrim(jQuery:GetJsonText("chamado"))
+    Local cOsDesenv     := AllTrim(jQuery:GetJsonText("osDesenv"))
+    Local cLinhaPv      := AllTrim(jQuery:GetJsonText("linhaPv"))
+    Local cValorHora    := AllTrim(jQuery:GetJsonText("valorHora"))
+    Local cOs           := ""
+    Local oErro         := Nil
 
     oRest:setKeyHeaderResponse("Content-Type", "application/json")
 
-    cErroDados := CNSA002_VALIDADADOS(jQuery, .F.)
-    If !Empty(cErroDados)
-        Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErroDados))
-    EndIf
+    Begin Sequence
 
-    Try
+        If Empty(cCodCliente) .Or. Empty(cLojaCliente)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe o cliente e o site do cliente."}')
+        EndIf
+        If Empty(cUsuario)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe o usuario."}')
+        EndIf
+        If Empty(cModulo)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe o modulo."}')
+        EndIf
+        If Empty(cMotivo)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe o motivo."}')
+        EndIf
+        If Empty(cDescricao)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe a descricao."}')
+        EndIf
+        If Empty(cCodServico)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe o codigo do servico."}')
+        EndIf
+        If Empty(cDataOs)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe a data da OS."}')
+        EndIf
+        If Empty(cHoraIniDec) .Or. Empty(cHoraFimDec)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe a hora inicial e final (decimais)."}')
+        EndIf
+        If Empty(cHorasTiDec)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe as horas TI (decimais)."}')
+        EndIf
+        If Empty(cCodAnalista)
+            Return oRest:setStatusResponse(400, '{"erro":"Informe o analista."}')
+        EndIf
+
+        If Empty(cDtDigitacao)
+            cDtDigitacao := DToS(Date())
+        Else
+            cDtDigitacao := StrTran(cDtDigitacao, "-", "")
+        EndIf
+
         cOs := GetSxeNum("SZ1", "Z1_OS")
 
-        oModel := FWLoadModel("CNSA002")
-        oModel:GetModel("SZ2DETAIL"):SetOptional(.T.)
-        oModel:SetOperation(MODEL_OPERATION_INSERT)
-        oModel:Activate()
+        RecLock("SZ1", .T.)
+            SZ1->Z1_FILIAL  := xFilial("SZ1")
+            SZ1->Z1_OS      := cOs
+            SZ1->Z1_DTDIGIT := STOD(cDtDigitacao)
+            SZ1->Z1_CLI     := cCodCliente
+            SZ1->Z1_LOJA    := cLojaCliente
+            SZ1->Z1_USR     := cUsuario
+            SZ1->Z1_MODULO  := cModulo
+            SZ1->Z1_MOTIV   := cMotivo
+            SZ1->Z1_SERV    := cDescricao
+            SZ1->Z1_TIPO    := cCodServico
+            SZ1->Z1_DTOS    := STOD(StrTran(cDataOs, "-", ""))
+            SZ1->Z1_INTERNO := If(Empty(cOsInterna), "N", cOsInterna)
+            SZ1->Z1_INI     := Val(cHoraIniDec)
+            SZ1->Z1_FIM     := Val(cHoraFimDec)
+            SZ1->Z1_TRANS   := Val(cHorasTranDec)
+            SZ1->Z1_PREVIST := If(Empty(cPrevPmt), "N", cPrevPmt)
+            SZ1->Z1_TOTAL   := Val(cHorasTiDec)
+            SZ1->Z1_TEC     := cCodAnalista
+            SZ1->Z1_NUMPRO  := cNumProposta
+            SZ1->Z1_PV      := cPedVenda
+            SZ1->Z1_ALMOCO  := Val(cHrAlmoco)
+            SZ1->Z1_PROJET  := cProjeto
+            SZ1->Z1_REVISA  := cRevisao
+            SZ1->Z1_TAREFA  := cTarefa
+            SZ1->Z1_CHPSD   := cChamadoHpsd
+            SZ1->Z1_CHHDK   := Val(cChamado)
+            SZ1->Z1_OSDESE  := If(Empty(cOsDesenv), "N", cOsDesenv)
+            SZ1->Z1_LIN     := cLinhaPv
+            SZ1->Z1_VLRHR   := Val(cValorHora)
+            SZ1->Z1_APROVAD := "N"
+            SZ1->Z1_FATURAR := "N"
+        SZ1->(MsUnlock())
 
-        oModel:SetValue("SZ1MASTER", "Z1_OS",      cOs)
-        oModel:SetValue("SZ1MASTER", "Z1_CLI",     jQuery:GetJsonText("codCliente"))
-        oModel:SetValue("SZ1MASTER", "Z1_LOJA",    jQuery:GetJsonText("lojaCliente"))
-        oModel:SetValue("SZ1MASTER", "Z1_USR",     jQuery:GetJsonText("usuario"))
-        oModel:SetValue("SZ1MASTER", "Z1_MODULO",  jQuery:GetJsonText("modulo"))
-        oModel:SetValue("SZ1MASTER", "Z1_MOTIV",   jQuery:GetJsonText("motivo"))
-        oModel:SetValue("SZ1MASTER", "Z1_SERV",    DecodeUTF8(jQuery:GetJsonText("descricao")))
-        oModel:SetValue("SZ1MASTER", "Z1_TIPO",    jQuery:GetJsonText("codServico"))
-        oModel:SetValue("SZ1MASTER", "Z1_DTOS",    CNSA002_ISODATA(jQuery:GetJsonText("dataOs")))
-        oModel:SetValue("SZ1MASTER", "Z1_INI",     CNSA002_JSONNUM(jQuery, "horaInicialDec"))
-        oModel:SetValue("SZ1MASTER", "Z1_FIM",     CNSA002_JSONNUM(jQuery, "horaFinalDec"))
-        oModel:SetValue("SZ1MASTER", "Z1_TOTAL",   CNSA002_JSONNUM(jQuery, "horasTiDec"))
-        oModel:SetValue("SZ1MASTER", "Z1_TEC",     jQuery:GetJsonText("codAnalista"))
-        oModel:SetValue("SZ1MASTER", "Z1_DTDIGIT", If(Empty(jQuery:GetJsonText("dtDigitacao")), Date(), CNSA002_ISODATA(jQuery:GetJsonText("dtDigitacao"))))
-        oModel:SetValue("SZ1MASTER", "Z1_INTERNO", If(Empty(jQuery:GetJsonText("osInterna")), "N", jQuery:GetJsonText("osInterna")))
-        oModel:SetValue("SZ1MASTER", "Z1_TRANS",   CNSA002_JSONNUM(jQuery, "horasTranDec"))
-        oModel:SetValue("SZ1MASTER", "Z1_PREVIST", If(Empty(jQuery:GetJsonText("prevPmt")), "N", jQuery:GetJsonText("prevPmt")))
-        oModel:SetValue("SZ1MASTER", "Z1_NUMPRO",  jQuery:GetJsonText("numProposta"))
-        oModel:SetValue("SZ1MASTER", "Z1_PV",      jQuery:GetJsonText("pedVenda"))
-        oModel:SetValue("SZ1MASTER", "Z1_ALMOCO",  CNSA002_JSONNUM(jQuery, "hrAlmoco"))
-        oModel:SetValue("SZ1MASTER", "Z1_PROJET",  jQuery:GetJsonText("projeto"))
-        oModel:SetValue("SZ1MASTER", "Z1_REVISA",  jQuery:GetJsonText("revisao"))
-        oModel:SetValue("SZ1MASTER", "Z1_TAREFA",  jQuery:GetJsonText("tarefa"))
-        oModel:SetValue("SZ1MASTER", "Z1_CHPSD",   jQuery:GetJsonText("chamadoHpsd"))
-        oModel:SetValue("SZ1MASTER", "Z1_CHHDK",   CNSA002_JSONNUM(jQuery, "chamado"))
-        oModel:SetValue("SZ1MASTER", "Z1_OSDESE",  If(Empty(jQuery:GetJsonText("osDesenv")), "N", jQuery:GetJsonText("osDesenv")))
-        oModel:SetValue("SZ1MASTER", "Z1_LIN",     jQuery:GetJsonText("linhaPv"))
-        oModel:SetValue("SZ1MASTER", "Z1_VLRHR",   CNSA002_JSONNUM(jQuery, "valorHora"))
-        oModel:SetValue("SZ1MASTER", "Z1_APROVAD", "N")
-        oModel:SetValue("SZ1MASTER", "Z1_FATURAR", "N")
-
-        If !oModel:VldData()
-            cErro := CNSA002_ERROMODEL(oModel)
-            oModel:DeActivate()
-            RollBackSX8()
-            Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErro))
-        EndIf
-
-        If !oModel:CommitData()
-            cErro := CNSA002_ERROMODEL(oModel)
-            oModel:DeActivate()
-            RollBackSX8()
-            Return oRest:setStatusResponse(500, CNSA002_RESPERRO(cErro))
-        EndIf
-
-        oModel:DeActivate()
         ConfirmSX8()
 
-    Catch oErro
-        If oModel <> Nil
-            oModel:DeActivate()
-        EndIf
-        RollBackSX8()
-        FWLogMsg("ERROR", , "REST", "CNSA_OS_INCLUIR", , "01", oErro:Description, 0, 0, {})
-        Return oRest:setStatusResponse(500, CNSA002_RESPERRO(oErro:Description))
-    EndTry
+        Return oRest:setStatusResponse(200, CNSA002_RESPOK(cOs, "OS incluida com sucesso."))
 
-Return oRest:setStatusResponse(200, CNSA002_RESPOK(cOs, "OS incluida com sucesso."))
+    Recover Using oErro
+        RollBackSX8()
+        Return oRest:setStatusResponse(500, '{"erro":"' + CNSA_OS_JSONESC(EncodeUtf8(oErro:Description)) + '"}')
+    End Sequence
+
+Return oRest:setStatusResponse(500, '{"erro":"Erro desconhecido."}')
 
 ////////////////////////////////////////////////////////////////////////////////
 // ALTERAR - @Post, mesma URL/querystring de sempre (POST /CNSAOSALTERAR
-// ?os=...). Logica interna 100% igual a antes (RecLock direto na SZ1) - NAO
-// usa FWModel("CNSA002") aqui: o SZ2DETAIL (Horas Contratadas) do model e
-// relacionado por CLIENTE, nao por OS (Z2_CODCLI+Z2_LOJA), entao alterar via
-// FWModel arriscaria reescrever linhas de SZ2 de OUTRAS OS do mesmo cliente
-// se codCliente mudasse (achado na revisao final, confirmado com Henrique -
-// so Incluir usa FWModel, que nao tem esse risco por ser registro novo sem
-// SZ2 pre-existente). Alteracao PARCIAL - so grava o campo que veio.
+// ?os=...). Logica interna 100% igual a antes (RecLock direto na SZ1) - sem
+// FWModel em nenhum endpoint deste arquivo (decisao: o SZ2DETAIL (Horas
+// Contratadas) do model FWModel("CNSA002") e relacionado por CLIENTE, nao por
+// OS, entao gravar via FWModel arriscaria tocar linhas de SZ2 de OUTRAS OS do
+// mesmo cliente). Alteracao PARCIAL - so grava o campo que veio.
 ////////////////////////////////////////////////////////////////////////////////
 @Post("/CNSAOSALTERAR")
 User Function CNSA_OS_ALTERAR() As Logical

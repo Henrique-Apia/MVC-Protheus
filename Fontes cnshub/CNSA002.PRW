@@ -132,14 +132,8 @@ Return l_oModel
 // Valida os campos do cabecalho (tabela SZ1)
 Static Function FSZ1PosValid(p_oField, p_sAcao, p_sCampo, p_vValor)
     Local l_bOk := .T.
-    // Z1_INI/Z1_FIM/Z1_TOTAL (hora inicial/final/horas TI) ficam fora daqui -
-    // Empty(0) e .T. em AdvPL, rejeitaria um horario/quantidade zero legitimo
-    // vindo do @Post /CNSAOSINCLUIR (POUICNSA002.PRW), que ja valida a
-    // obrigatoriedade desses 3 campos por presenca (jQuery[campo]<>Nil), nao
-    // por valor - checagem correta pra numerico. Aqui fica so a
-    // obrigatoriedade dos campos texto/data.
     Local aObrigatorios := {"Z1_CLI", "Z1_LOJA", "Z1_USR", "Z1_MODULO", "Z1_MOTIV", ;
-        "Z1_SERV", "Z1_TIPO", "Z1_DTOS", "Z1_TEC"}
+        "Z1_SERV", "Z1_TIPO", "Z1_DTOS", "Z1_INI", "Z1_FIM", "Z1_TOTAL", "Z1_TEC"}
 
     If AScan(aObrigatorios, p_sCampo) > 0 .And. Empty(p_vValor)
         l_bOk := .F.
