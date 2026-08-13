@@ -5,6 +5,7 @@
 #include "FWMBROWSE.CH"
 #include "FWMVCDEF.CH"
 #include "COLORS.CH"
+#include "tlpp-core.th"
 #INCLUDE 'tlpp-rest.th'
 
 PUBLISH MODEL REST NAME OS
@@ -251,14 +252,63 @@ Static Function CNSA002_RESPOK(cOs, cMsg)
     Local oJson := JsonObject():New()
     oJson["sucesso"]  := .T.
     oJson["os"]       := cOs
-    oJson["mensagem"] := cMsg
+    oJson["mensagem"] := EncodeUtf8(cMsg)
 Return oJson:ToJson()
 
 Static Function CNSA002_RESPERRO(cErro)
     Local oJson := JsonObject():New()
     oJson["sucesso"] := .F.
-    oJson["erro"]    := cErro
+    oJson["erro"]    := EncodeUtf8(cErro)
 Return oJson:ToJson()
+
+Static Function CNSA002_CAMPOSOBRIGATORIOS()
+    Local aCampos := {}
+    AAdd(aCampos, {"codCliente",     "o cliente",           .F.})
+    AAdd(aCampos, {"lojaCliente",    "o site do cliente",   .F.})
+    AAdd(aCampos, {"usuario",        "o usuario",           .F.})
+    AAdd(aCampos, {"modulo",         "o modulo",            .F.})
+    AAdd(aCampos, {"motivo",         "o motivo",            .F.})
+    AAdd(aCampos, {"descricao",      "a descricao",         .F.})
+    AAdd(aCampos, {"codServico",     "o codigo do servico", .F.})
+    AAdd(aCampos, {"dataOs",         "a data da OS",        .F.})
+    AAdd(aCampos, {"horaInicialDec", "a hora inicial",      .T.})
+    AAdd(aCampos, {"horaFinalDec",   "a hora final",        .T.})
+    AAdd(aCampos, {"horasTiDec",     "as horas TI",         .T.})
+    AAdd(aCampos, {"codAnalista",    "o analista",          .F.})
+Return aCampos
+
+// lParcial .F. (Incluir): todo campo obrigatorio precisa estar presente e nao-vazio.
+// lParcial .T. (Alterar): so valida os campos que VIERAM no body - se vier vazio
+// (nao Nil) um campo obrigatorio, rejeita; se nem vier, ignora (parcial de verdade).
+Static Function CNSA002_VALIDABODY(jBody, lParcial)
+    Local aCampos   := CNSA002_CAMPOSOBRIGATORIOS()
+    Local nI        := 0
+    Local xVal      := Nil
+    Local lPresente := .F.
+
+    For nI := 1 To Len(aCampos)
+        xVal      := jBody[aCampos[nI][1]]
+        lPresente := xVal <> Nil
+
+        If !lParcial .And. !lPresente
+            Return "Informe " + aCampos[nI][2] + "."
+        EndIf
+
+        If lPresente .And. !aCampos[nI][3] .And. Empty(AllTrim(cValToChar(xVal)))
+            Return "Informe " + aCampos[nI][2] + "."
+        EndIf
+    Next nI
+
+Return ""
+
+Static Function CNSA002_TEMCAMPO(jBody, aChaves)
+    Local nI := 0
+    For nI := 1 To Len(aChaves)
+        If jBody[aChaves[nI]] <> Nil
+            Return .T.
+        EndIf
+    Next nI
+Return .F.
 
 ////////////////////////////////////////////////////////////////////////////////
 // POST /cnsaos - Inclui uma nova OS (SZ1) via FWModel("CNSA002").
@@ -270,11 +320,17 @@ User Function CNSA002_INCLUIR_OS() As Logical
     Local oModel := Nil
     Local cOs    := ""
     Local cErro  := ""
+    Local cErroBody := "" As Character
 
     oRest:setKeyHeaderResponse("Content-Type", "application/json")
 
     If jBody:fromJson(cBody) <> Nil
         Return oRest:setStatusResponse(400, CNSA002_RESPERRO("Body JSON invalido."))
+    EndIf
+
+    cErroBody := CNSA002_VALIDABODY(jBody, .F.)
+    If !Empty(cErroBody)
+        Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErroBody))
     EndIf
 
     Try
@@ -283,6 +339,7 @@ User Function CNSA002_INCLUIR_OS() As Logical
         oModel := FWLoadModel("CNSA002")
         oModel:SetOperation(MODEL_OPERATION_INSERT)
         oModel:Activate()
+        oModel:GetModel("SZ2DETAIL"):SetOptional(.T.)
 
         oModel:SetValue("SZ1MASTER", "Z1_OS",      cOs)
         oModel:SetValue("SZ1MASTER", "Z1_CLI",     jBody:GetJsonText("codCliente"))
@@ -357,6 +414,7 @@ User Function CNSA002_ALTERAR_OS() As Logical
     Local jBody   := JsonObject():New() As Json
     Local oModel  := Nil
     Local cErro   := ""
+    Local cErroBody := "" As Character
 
     oRest:setKeyHeaderResponse("Content-Type", "application/json")
 
@@ -364,13 +422,25 @@ User Function CNSA002_ALTERAR_OS() As Logical
         Return oRest:setStatusResponse(400, CNSA002_RESPERRO("Body JSON invalido."))
     EndIf
 
-    DbSelectArea("SZ1")
-    SZ1->(DbSetOrder(1))
-    If !SZ1->(DbSeek(xFilial("SZ1") + cOs))
-        Return oRest:setStatusResponse(404, CNSA002_RESPERRO("OS nao encontrada."))
+    cErroBody := CNSA002_VALIDABODY(jBody, .T.)
+    If !Empty(cErroBody)
+        Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErroBody))
+    EndIf
+
+    If !CNSA002_TEMCAMPO(jBody, {"codCliente", "lojaCliente", "usuario", "modulo", "motivo", ;
+        "descricao", "codServico", "dataOs", "horaInicialDec", "horaFinalDec", "horasTranDec", ;
+        "horasTiDec", "codAnalista", "osInterna", "prevPmt", "numProposta", "pedVenda", "hrAlmoco", ;
+        "projeto", "revisao", "tarefa", "chamadoHpsd", "chamado", "osDesenv", "linhaPv", "valorHora"})
+        Return oRest:setStatusResponse(400, CNSA002_RESPERRO("Informe ao menos um campo para alterar."))
     EndIf
 
     Try
+        DbSelectArea("SZ1")
+        SZ1->(DbSetOrder(1))
+        If !SZ1->(DbSeek(xFilial("SZ1") + cOs))
+            Return oRest:setStatusResponse(404, CNSA002_RESPERRO("OS nao encontrada."))
+        EndIf
+
         oModel := FWLoadModel("CNSA002")
         oModel:SetOperation(MODEL_OPERATION_UPDATE)
         oModel:Activate()
@@ -490,13 +560,13 @@ User Function CNSA002_EXCLUIR_OS() As Logical
 
     oRest:setKeyHeaderResponse("Content-Type", "application/json")
 
-    DbSelectArea("SZ1")
-    SZ1->(DbSetOrder(1))
-    If !SZ1->(DbSeek(xFilial("SZ1") + cOs))
-        Return oRest:setStatusResponse(404, CNSA002_RESPERRO("OS nao encontrada."))
-    EndIf
-
     Try
+        DbSelectArea("SZ1")
+        SZ1->(DbSetOrder(1))
+        If !SZ1->(DbSeek(xFilial("SZ1") + cOs))
+            Return oRest:setStatusResponse(404, CNSA002_RESPERRO("OS nao encontrada."))
+        EndIf
+
         oModel := FWLoadModel("CNSA002")
         oModel:SetOperation(MODEL_OPERATION_DELETE)
         oModel:Activate()
