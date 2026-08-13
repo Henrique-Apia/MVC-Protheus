@@ -5,6 +5,7 @@
 #include "FWMBROWSE.CH"
 #include "FWMVCDEF.CH"
 #include "COLORS.CH"
+#INCLUDE 'tlpp-rest.th'
 
 PUBLISH MODEL REST NAME OS
 
@@ -208,3 +209,136 @@ User Function LEGENDA()
         })
 
 Return
+
+////////////////////////////////////////////////////////////////////////////////
+// Helpers compartilhados pelos endpoints REST (Incluir/Alterar/Excluir OS).
+////////////////////////////////////////////////////////////////////////////////
+Static Function CNSA002_ISODATA(cIso)
+    If Empty(cIso)
+        Return CToD("")
+    EndIf
+Return StoD(StrTran(cIso, "-", ""))
+
+Static Function CNSA002_JSONNUM(jBody, cCampo)
+    Local xVal := jBody[cCampo]
+    If xVal == Nil
+        Return 0
+    EndIf
+Return Val(cValToChar(xVal))
+
+Static Function CNSA002_ERROMODEL(oModel)
+    Local aErros := oModel:GetErrorMessage()
+    Local cMsg   := ""
+    Local nI     := 0
+
+    If ValType(aErros) == "A"
+        For nI := 1 To Len(aErros)
+            If ValType(aErros[nI]) == "A" .And. Len(aErros[nI]) >= 6 .And. !Empty(aErros[nI][6])
+                cMsg += aErros[nI][6] + "; "
+            EndIf
+        Next nI
+    EndIf
+
+    If Empty(cMsg)
+        cMsg := "Erro de validacao no registro."
+    ElseIf Right(cMsg, 2) == "; "
+        cMsg := Left(cMsg, Len(cMsg) - 2)
+    EndIf
+
+Return cMsg
+
+Static Function CNSA002_RESPOK(cOs, cMsg)
+    Local oJson := JsonObject():New()
+    oJson["sucesso"]  := .T.
+    oJson["os"]       := cOs
+    oJson["mensagem"] := cMsg
+Return oJson:ToJson()
+
+Static Function CNSA002_RESPERRO(cErro)
+    Local oJson := JsonObject():New()
+    oJson["sucesso"] := .F.
+    oJson["erro"]    := cErro
+Return oJson:ToJson()
+
+////////////////////////////////////////////////////////////////////////////////
+// POST /cnsaos - Inclui uma nova OS (SZ1) via FWModel("CNSA002").
+////////////////////////////////////////////////////////////////////////////////
+@Post("/cnsaos")
+User Function CNSA002_INCLUIR_OS() As Logical
+    Local cBody  := oRest:getBodyRequest() As Character
+    Local jBody  := JsonObject():New() As Json
+    Local oModel := Nil
+    Local cOs    := ""
+    Local cErro  := ""
+
+    oRest:setKeyHeaderResponse("Content-Type", "application/json")
+
+    If jBody:fromJson(cBody) <> Nil
+        Return oRest:setStatusResponse(400, CNSA002_RESPERRO("Body JSON invalido."))
+    EndIf
+
+    Try
+        cOs := GetSxeNum("SZ1", "Z1_OS")
+
+        oModel := FWLoadModel("CNSA002")
+        oModel:SetOperation(MODEL_OPERATION_INSERT)
+        oModel:Activate()
+
+        oModel:SetValue("SZ1MASTER", "Z1_OS",      cOs)
+        oModel:SetValue("SZ1MASTER", "Z1_CLI",     jBody:GetJsonText("codCliente"))
+        oModel:SetValue("SZ1MASTER", "Z1_LOJA",    jBody:GetJsonText("lojaCliente"))
+        oModel:SetValue("SZ1MASTER", "Z1_USR",     jBody:GetJsonText("usuario"))
+        oModel:SetValue("SZ1MASTER", "Z1_MODULO",  jBody:GetJsonText("modulo"))
+        oModel:SetValue("SZ1MASTER", "Z1_MOTIV",   jBody:GetJsonText("motivo"))
+        oModel:SetValue("SZ1MASTER", "Z1_SERV",    DecodeUTF8(jBody:GetJsonText("descricao")))
+        oModel:SetValue("SZ1MASTER", "Z1_TIPO",    jBody:GetJsonText("codServico"))
+        oModel:SetValue("SZ1MASTER", "Z1_DTOS",    CNSA002_ISODATA(jBody:GetJsonText("dataOs")))
+        oModel:SetValue("SZ1MASTER", "Z1_INI",     CNSA002_JSONNUM(jBody, "horaInicialDec"))
+        oModel:SetValue("SZ1MASTER", "Z1_FIM",     CNSA002_JSONNUM(jBody, "horaFinalDec"))
+        oModel:SetValue("SZ1MASTER", "Z1_TOTAL",   CNSA002_JSONNUM(jBody, "horasTiDec"))
+        oModel:SetValue("SZ1MASTER", "Z1_TEC",     jBody:GetJsonText("codAnalista"))
+        oModel:SetValue("SZ1MASTER", "Z1_DTDIGIT", If(Empty(jBody:GetJsonText("dtDigitacao")), Date(), CNSA002_ISODATA(jBody:GetJsonText("dtDigitacao"))))
+        oModel:SetValue("SZ1MASTER", "Z1_INTERNO", If(Empty(jBody:GetJsonText("osInterna")), "N", jBody:GetJsonText("osInterna")))
+        oModel:SetValue("SZ1MASTER", "Z1_TRANS",   CNSA002_JSONNUM(jBody, "horasTranDec"))
+        oModel:SetValue("SZ1MASTER", "Z1_PREVIST", If(Empty(jBody:GetJsonText("prevPmt")), "N", jBody:GetJsonText("prevPmt")))
+        oModel:SetValue("SZ1MASTER", "Z1_NUMPRO",  jBody:GetJsonText("numProposta"))
+        oModel:SetValue("SZ1MASTER", "Z1_PV",      jBody:GetJsonText("pedVenda"))
+        oModel:SetValue("SZ1MASTER", "Z1_ALMOCO",  CNSA002_JSONNUM(jBody, "hrAlmoco"))
+        oModel:SetValue("SZ1MASTER", "Z1_PROJET",  jBody:GetJsonText("projeto"))
+        oModel:SetValue("SZ1MASTER", "Z1_REVISA",  jBody:GetJsonText("revisao"))
+        oModel:SetValue("SZ1MASTER", "Z1_TAREFA",  jBody:GetJsonText("tarefa"))
+        oModel:SetValue("SZ1MASTER", "Z1_CHPSD",   jBody:GetJsonText("chamadoHpsd"))
+        oModel:SetValue("SZ1MASTER", "Z1_CHHDK",   CNSA002_JSONNUM(jBody, "chamado"))
+        oModel:SetValue("SZ1MASTER", "Z1_OSDESE",  If(Empty(jBody:GetJsonText("osDesenv")), "N", jBody:GetJsonText("osDesenv")))
+        oModel:SetValue("SZ1MASTER", "Z1_LIN",     jBody:GetJsonText("linhaPv"))
+        oModel:SetValue("SZ1MASTER", "Z1_VLRHR",   CNSA002_JSONNUM(jBody, "valorHora"))
+        oModel:SetValue("SZ1MASTER", "Z1_APROVAD", "N")
+        oModel:SetValue("SZ1MASTER", "Z1_FATURAR", "N")
+
+        If !oModel:VldData()
+            cErro := CNSA002_ERROMODEL(oModel)
+            oModel:DeActivate()
+            RollBackSX8()
+            Return oRest:setStatusResponse(400, CNSA002_RESPERRO(cErro))
+        EndIf
+
+        If !oModel:CommitData()
+            cErro := CNSA002_ERROMODEL(oModel)
+            oModel:DeActivate()
+            RollBackSX8()
+            Return oRest:setStatusResponse(500, CNSA002_RESPERRO(cErro))
+        EndIf
+
+        oModel:DeActivate()
+        ConfirmSX8()
+
+    Catch oErro
+        If oModel <> Nil
+            oModel:DeActivate()
+        EndIf
+        RollBackSX8()
+        FWLogMsg("ERROR", , "REST", "CNSA002_INCLUIR_OS", , "01", oErro:Description, 0, 0, {})
+        Return oRest:setStatusResponse(500, CNSA002_RESPERRO(oErro:Description))
+    EndTry
+
+Return oRest:setStatusResponse(201, CNSA002_RESPOK(cOs, "OS incluida com sucesso."))
