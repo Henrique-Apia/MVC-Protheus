@@ -6,9 +6,11 @@
 #INCLUDE 'tlpp-rest.th'
 
 ////////////////////////////////////////////////////////////////////////////////
-// POUICNSA002.prw
+// Apia-OS.tlpp (ex POUICNSA002.prw)
 // API REST do portal PO-UI de Ordens de Servico (pouios/apia-po-cnshub) -
-// espelha POUICNSA001.prw (chamados). Migrado de WSRESTFUL/WSMETHOD pra
+// botao "Ordem de Servico" do apia-po-cnshub (app.ts) -> rota /cns003
+// (app.routes.ts) -> Cns003 -> OsServ (os-serv.ts), que chama estas mesmas
+// URLs. Espelha POUICNSA001.prw (chamados). Migrado de WSRESTFUL/WSMETHOD pra
 // anotacoes TLPP (@Get/@Post) - mesmas URLs, mesmos verbos, mesmos parametros
 // via querystring de sempre (zero mudanca de contrato pro front). Logica
 // interna de todos os endpoints continua 100% igual a antes (consulta/gravacao
