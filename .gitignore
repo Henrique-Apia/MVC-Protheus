@@ -1,12 +1,4 @@
-# Dependências e builds (qualquer subprojeto)
-**/node_modules/
-**/dist/
-**/.angular/
-
-# Ferramentas locais
-.claude/
+node_modules/
+dist/
+.angular/
 .superpowers/
-
-# Diversos
-*.log
-status_completo.txt
